@@ -1,0 +1,21 @@
+SEC("lock_rwsem_global")
+int custom_lock_bypass_acquire(struct __lock_policy_args *args)
+{
+	/* bpf_printk("[acq  ] %lu | %lu | %lu \n", args->InhibitUntil, args->RBias, args->per_cpu_data); */
+
+	u32 pid = bpf_get_current_pid_tgid();
+
+	if(args->RBias == 1){
+		if(args->per_cpu_data == 0){
+			args->per_cpu_data = pid;
+
+			if(args->RBias == 1){	// Recheck
+				return 1;	// fast_path
+			}
+			else{	// Raced; RBias changed
+				args->per_cpu_data = 0;
+			}
+		}
+	}
+	return 0;
+}

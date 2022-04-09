@@ -1,0 +1,73 @@
+EXT_ORIG        ?= ORIG.o
+EXT_PATCHED     ?= PATCHED.o
+EXT_FAIL        ?= PATCHED.FAIL.o
+EXT_TEST        ?= test
+EXT_OUTPUT      ?= OUTPUT.o
+EXT_TEST_OUTPUT ?= test.out
+EXT_SYMTAB      ?= symtab
+EXT_SYMVERS     ?= symvers
+EXT_ENV         ?= env
+TNAME            = $(@:.$(EXT_OUTPUT)=)
+
+ifndef VERBOSE
+MUTE_PASS := >/dev/null
+MUTE_FAIL := >/dev/null 2>&1
+.SILENT: $(TARGETS) $(TEST_TARGETS)
+endif
+
+SRC_PATH        ?= $(realpath ../../../../)
+CDO             ?= $(SRC_PATH)/kpatch-build/create-diff-object
+TEST_LIBRARY    ?= $(SRC_PATH)/test/test-functions.sh
+
+TEST_ENV = KPATCH_TEST_LIBRARY=$(TEST_LIBRARY)
+
+TARGETS      = $(patsubst %.$(EXT_ORIG),%.$(EXT_OUTPUT),$(wildcard *.$(EXT_ORIG)))
+TEST_TARGETS = $(patsubst %.$(EXT_TEST),%.$(EXT_TEST_OUTPUT),$(wildcard *.$(EXT_TEST)))
+
+SYMVERS_FILE = $(if $(wildcard $(TNAME).$(EXT_SYMVERS)),$(TNAME).$(EXT_SYMVERS),/dev/null)
+
+define check_stripped =
+	$(if $(shell readelf --debug-dump $(1)),
+		$(error $(1) is not properly stripped, use 'strip --strip-debug --keep-file-symbols $(1)' to fix this),
+	)
+endef
+
+define check_all =
+	$(if $(findstring NOSTRIP,$(1)), , $(call check_stripped,$(1)))
+endef
+
+.DELETE_ON_ERROR: %.$(EXT_OUTPUT)
+
+all: $(TARGETS) $(TEST_TARGETS)
+
+clean:
+	rm -f *.$(EXT_TEST_OUTPUT) *.$(EXT_OUTPUT)
+
+%.$(EXT_SYMTAB):
+	readelf -s --wide $(patsubst %.$(EXT_SYMTAB),%.$(EXT_ORIG),$(@)) | \
+		sed -r 's/\s+\[<localentry>: 8\]//' >$@
+
+%.$(EXT_TEST_OUTPUT): %.$(EXT_OUTPUT) %.$(EXT_TEST) $(TEST_LIBRARY)
+	@echo "TEST $(@:.$(EXT_TEST_OUTPUT)=)"
+	$(TEST_ENV) bash $(@:.$(EXT_TEST_OUTPUT)=.$(EXT_TEST)) $<
+# Don't rely on script creating this
+	@touch $@
+
+%.$(EXT_OUTPUT): %.$(EXT_ORIG) %.$(EXT_PATCHED) %.$(EXT_SYMTAB) $(CDO)
+	@echo "BUILD $(TNAME)"
+	$(call check_all,$(TNAME).$(EXT_ORIG))
+	$(call check_all,$(TNAME).$(EXT_PATCHED))
+	$(CDO_ENV) $(shell cat $(TNAME).$(EXT_ENV) 2>/dev/null) $(CDO) $(TNAME).$(EXT_ORIG) $(TNAME).$(EXT_PATCHED) \
+		vmlinux $(TNAME).$(EXT_SYMTAB) $(SYMVERS_FILE) \
+		test_$(TNAME) $@ $(MUTE_PASS)
+
+%.$(EXT_OUTPUT): %.$(EXT_ORIG) %.$(EXT_FAIL) %.$(EXT_SYMTAB) $(CDO)
+	@echo "BUILD $(TNAME)-FAIL"
+	$(call check_all,$(TNAME).$(EXT_ORIG))
+	$(call check_all,$(TNAME).$(EXT_FAIL))
+	! $(CDO_ENV) $(shell cat $(TNAME).$(EXT_ENV) 2>/dev/null) $(CDO) $(TNAME).$(EXT_ORIG) $(TNAME).$(EXT_FAIL) \
+		vmlinux $(TNAME).$(EXT_SYMTAB) $(SYMVERS_FILE) \
+		test_$(TNAME) $@ $(MUTE_FAIL)
+# Expecting to fail, thus create output file manually so we won't rerun the
+# test without clean
+	@touch $@

@@ -1,0 +1,347 @@
+#!/bin/bash
+#
+# kpatch integration test framework
+#
+# Copyright (C) 2014 Josh Poimboeuf <jpoimboe@redhat.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA,
+# 02110-1301, USA.
+#
+#
+# This is a basic integration test framework for kpatch, which tests building,
+# loading, and unloading patches, as well as any other related custom tests.
+#
+# This script looks for test input files in the current directory.  It expects
+# certain file naming conventions:
+#
+# - foo.patch: patch that should build successfully
+#
+# - bar-FAIL.patch: patch that should fail to build
+#
+# - foo-LOADED.test: executable which tests whether the foo.patch module is
+#   loaded.  It will be used to test that loading/unloading the patch module
+#   works as expected.
+#
+# Any other *.test files will be executed after all the patch modules have been
+# built from the *.patch files.  They can be used for more custom tests above
+# and beyond the simple loading and unloading tests.
+
+shopt -s nullglob
+
+# shellcheck disable=SC2046
+SCRIPTDIR=$(readlink -f $(dirname $(type -p "$0")))
+ROOTDIR=$(readlink -f "$SCRIPTDIR/../..")
+# TODO: option to use system-installed binaries instead
+KPATCH="sudo $ROOTDIR/kpatch/kpatch"
+unset CCACHE_HASHDIR
+KPATCHBUILD="$ROOTDIR"/kpatch-build/kpatch-build
+ERROR=0
+LOG=test.log
+DYNDEBUG_CONTROL=/sys/kernel/debug/dynamic_debug/control
+DYNDEBUG_ENABLED=1
+rm -f ./*.log
+
+PATCHDIR="${PATCHDIR:-$PWD}"
+declare -a PATCH_LIST
+declare -a TEST_LIST
+
+usage() {
+	echo "usage: $0 [options] [patch1 ... patchN]" >&2
+	echo "		patchN  	Pathnames of patches to test" >&2
+	echo "		-h, --help	Show this help message" >&2
+	echo "		-c, --cached	Don't rebuild patch modules" >&2
+	echo "		-d, --directory	Patch directory" >&2
+	echo "		-q, --quick	Test combined patch and -FAIL patches only" >&2
+}
+
+options=$(getopt -o hcd:q -l "help,cached,directory,quick" -- "$@") || exit 1
+
+eval set -- "$options"
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	-h|--help)
+		usage
+		exit 0
+		;;
+	-c|--cached)
+		SKIPBUILD=1
+		;;
+	-d|--directory)
+		PATCHDIR="$2"
+		shift
+		;;
+	-q|--quick)
+		QUICK=1
+		;;
+	*)
+		[[ "$1" = "--" ]] && shift && continue
+		PATCH_LIST+=("$1")
+		;;
+	esac
+	shift
+done
+
+if [[ ${#PATCH_LIST[@]} = 0 ]]; then
+	PATCH_LIST=("$PATCHDIR"/*.patch)
+	TEST_LIST=("$PATCHDIR"/*.test)
+	if [[ ${#PATCH_LIST[@]} = 0 ]]; then
+		echo "No patches found!"
+		exit 1
+	fi
+else
+	for file in "${PATCH_LIST[@]}"; do
+		prefix=${file%%.patch}
+		[[ -e "$prefix-FAIL.test" ]]   && TEST_LIST+=("$prefix-FAIL.test")
+		[[ -e "$prefix-LOADED.test" ]] && TEST_LIST+=("$prefix-LOADED.test")
+	done
+fi
+
+error() {
+	echo "ERROR: $*" |tee -a $LOG >&2
+	ERROR=$((ERROR + 1))
+}
+
+log() {
+	echo "$@" |tee -a $LOG
+}
+
+unload_all() {
+	$KPATCH unload --all
+}
+
+build_module() {
+	file=$1
+	prefix=$(basename "${file%%.patch}")
+	modname="test-$prefix"
+	module="${modname}.ko"
+
+	if [[ $prefix =~ -FAIL ]]; then
+		shouldfail=1
+	else
+		shouldfail=0
+	fi
+
+	if [[ $SKIPBUILD -eq 1 ]]; then
+		skip=0
+		[[ $shouldfail -eq 1 ]] && skip=1
+		[[ -e $module ]] && skip=1
+		[[ $skip -eq 1 ]] && log "skipping build: $prefix" && return
+	fi
+
+	log "build: $prefix"
+
+	if ! $KPATCHBUILD -n "$modname" "$file" >> $LOG 2>&1; then
+		if [[ $shouldfail -eq 0 ]]; then
+			error "$prefix: build failed"
+			cp "$HOME/.kpatch/build.log" "$prefix.log"
+		fi
+	else
+		[[ $shouldfail -eq 1 ]] && error "$prefix: build succeeded when it should have failed"
+	fi
+}
+
+run_load_test() {
+	file=$1
+	prefix=$(basename "${file%%.patch}")
+	modname="test-$prefix"
+	module="${modname}.ko"
+	testprog=$(dirname "$1")/"$prefix-LOADED.test"
+
+	[[ $prefix =~ -FAIL ]] && return
+
+	if [[ ! -e $module ]]; then
+		log "can't find $module, skipping"
+		return
+	fi
+
+	if [[ -e $testprog ]]; then
+		log "load test: $prefix"
+	else
+		log "load test: $prefix (no test prog)"
+	fi
+
+
+	if [[ -e $testprog ]] && $testprog >> $LOG 2>&1; then
+		error "$prefix: $testprog succeeded before kpatch load"
+		return
+	fi
+
+	if ! $KPATCH load "$module" >> $LOG 2>&1; then
+		error "$prefix: kpatch load failed"
+		return
+	fi
+
+	if [[ -e $testprog ]] && ! $testprog >> $LOG 2>&1; then
+		error "$prefix: $testprog failed after kpatch load"
+	fi
+
+	if ! $KPATCH unload "$module" >> $LOG 2>&1; then
+		error "$prefix: kpatch unload failed"
+		return
+	fi
+
+	if [[ -e $testprog ]] && $testprog >> $LOG 2>&1; then
+		error "$prefix: $testprog succeeded after kpatch unload"
+		return
+	fi
+}
+
+run_custom_test() {
+	testprog=$1
+	prefix=$(basename "${testprog%%.test}")
+
+	[[ $testprog = *-LOADED.test ]] && return
+
+	log "custom test: $prefix"
+
+	if ! $testprog >> $LOG 2>&1; then
+		error "$prefix: test failed"
+	fi
+}
+
+build_combined_module() {
+
+	if [[ $SKIPBUILD -eq 1 ]] && [[ -e test-COMBINED.ko ]]; then
+		log "skipping build: combined"
+		return
+	fi
+
+	declare -a COMBINED_LIST
+	for file in "${PATCH_LIST[@]}"; do
+		[[ $file =~ -FAIL ]] && log "combine: skipping $file" && continue
+		COMBINED_LIST+=("$file")
+	done
+	if [[ ${#COMBINED_LIST[@]} -le 1 ]]; then
+		log "skipping build: combined (only ${#PATCH_LIST[@]} patch(es))"
+		return
+	fi
+
+	log "build: combined module"
+
+	if ! $KPATCHBUILD -n test-COMBINED "${COMBINED_LIST[@]}" >> $LOG 2>&1; then
+		error "combined build failed"
+		cp "$HOME/.kpatch/build.log" combined.log
+	fi
+}
+
+run_combined_test() {
+	if [[ ! -e test-COMBINED.ko ]]; then
+		log "can't find test-COMBINED.ko, skipping"
+		return
+	fi
+
+	log "load test: combined module"
+
+	unload_all
+
+	for testprog in "${TEST_LIST[@]}"; do
+		[[ $testprog != *-LOADED.test ]] && continue
+		if $testprog >> $LOG 2>&1; then
+			error "combined: $testprog succeeded before kpatch load"
+			return
+		fi
+	done
+
+	if ! $KPATCH load test-COMBINED.ko >> $LOG 2>&1; then
+		error "combined: kpatch load failed"
+		return
+	fi
+
+	for testprog in "${TEST_LIST[@]}"; do
+		[[ $testprog != *-LOADED.test ]] && continue
+		[ -e "${testprog/-LOADED.test/.patch.disabled}" ] && continue
+		if ! $testprog >> $LOG 2>&1; then
+			error "combined: $testprog failed after kpatch load"
+		fi
+	done
+
+	if ! $KPATCH unload test-COMBINED.ko >> $LOG 2>&1; then
+		error "combined: kpatch unload failed"
+		return
+	fi
+
+	for testprog in "${TEST_LIST[@]}"; do
+		[[ $testprog != *-LOADED.test ]] && continue
+		if $testprog >> $LOG 2>&1; then
+			error "combined: $testprog succeeded after kpatch unload"
+			return
+		fi
+	done
+
+}
+
+# shellcheck disable=SC1091
+source /etc/os-release
+if [[ "${ID}" == "rhel" && "${VERSION_ID%%.*}" == "7" && "${VERSION_ID##*.}" -le "6" ]]; then
+	DYNDEBUG_ENABLED=0
+	echo "Dynamic debug is not supported on '${PRETTY_NAME}', disabling."
+fi
+
+echo "clearing printk buffer"
+sudo dmesg -C
+
+for file in "${PATCH_LIST[@]}"; do
+	if [[ $QUICK != 1 || "$file" =~ -FAIL ]]; then
+		build_module "$file"
+	fi
+done
+
+build_combined_module
+
+unload_all
+
+if [ "${DYNDEBUG_ENABLED}" == "1" ]; then
+	prev_dyndebug=$(grep klp_try_switch_task "${DYNDEBUG_CONTROL}" | awk '{print $3;}')
+	echo "func klp_try_switch_task +p" >"${DYNDEBUG_CONTROL}" 2>/dev/null
+fi
+
+if [[ $QUICK != 1 ]]; then
+	for file in "${PATCH_LIST[@]}"; do
+		run_load_test "$file"
+	done
+fi
+
+run_combined_test
+
+if [[ $QUICK != 1 ]]; then
+	for testprog in "${TEST_LIST[@]}"; do
+		if [[ ! $testprog =~ -FAIL ]]; then
+			unload_all
+			run_custom_test "$testprog"
+		fi
+	done
+fi
+
+
+unload_all
+
+if [ "${DYNDEBUG_ENABLED}" == "1" ]; then
+	echo "func klp_try_switch_task ${prev_dyndebug}" >"${DYNDEBUG_CONTROL}" 2>/dev/null
+fi
+
+if dmesg | grep -q "Call Trace"; then
+	dmesg > dmesg.log
+	error "kernel error detected in printk buffer"
+fi
+
+if [[ $ERROR -gt 0 ]]; then
+	log "$ERROR errors encountered"
+	echo "see test.log for more information"
+else
+	log "SUCCESS"
+fi
+
+exit $ERROR

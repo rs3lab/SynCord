@@ -1,0 +1,17 @@
+*.o
+*.o.cmd
+*.o.d
+*.ko.cmd
+*.mod.c
+*.swp
+*.d
+*.so
+.tmp_versions
+Module.symvers
+kmod/core/.cache.mk
+kpatch-build/lookup
+kpatch-build/create-diff-object
+kpatch-build/create-klp-module
+kpatch-build/create-kpatch-module
+man/kpatch.1.gz
+man/kpatch-build.1.gz

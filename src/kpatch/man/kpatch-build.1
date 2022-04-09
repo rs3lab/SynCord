@@ -1,0 +1,76 @@
+.\" Manpage for kpatch-build.
+.\" Contact udoseidel@gmx.de to correct errors or typos.
+.TH man 1 "23 Mar 2014" "1.0" "kpatch-build man page"
+.SH NAME
+kpatch-build \- build script
+.SH SYNOPSIS
+kpatch-build [options] <patch file>
+.SH DESCRIPTION
+This script takes a patch based on the version of the kernel 
+currently running and creates a kernel module that will replace 
+modified functions in the kernel such that the patched code takes 
+effect.
+
+.SH OPTIONS
+
+-h|--help
+   Show this help message
+
+-a|--archversion
+   Specify the kernel arch version
+
+-r|--sourcerpm
+   Specify kernel source RPM
+ 
+-s|--sourcedir
+   Specify kernel source directory
+
+-c|--config
+   Specify kernel config file
+
+-v|--vmlinux
+   Specify original vmlinux
+
+-j|--jobs
+   Specify the number of make jobs
+
+-t|--target
+   Specify custom kernel build targets
+
+-n|--name
+   Specify the name of the kpatch module
+
+-o|--output
+   Specify output folder
+
+-d|--debug
+   Keep scratch files in /tmp
+   (can be specified multiple times)
+
+-e|--oot-module
+   Enable patching out-of-tree module,
+   specify current version of module
+
+--skip-cleanup
+   Skip post-build cleanup
+
+--skip-gcc-check
+   Skips check that ensures that the system gcc version and
+   the gcc version that built the kernel match.  Skipping this
+   check is not recommended, but is useful if the exact gcc
+   version is not available or is not easily installed. Use
+   only when confident that the two versions of gcc output
+   identical objects for a given target.  Otherwise, use of
+   this option might result in unexpected changed objects
+   being detected.
+
+.SH SEE ALSO
+kpatch(1)
+.SH BUGS
+No known bugs.
+.SH AUTHOR
+Udo Seidel (udoseidel@gmx.de)
+.SH COPYRIGHT
+Copyright (C) 2014: Seth Jennings <sjenning@redhat.com>, Copyright (C) 
+2013,2014:  Josh Poimboeuf <jpoimboe@redhat.com>
+

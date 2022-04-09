@@ -1,0 +1,18 @@
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 85b7d08..419a7b5 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -3460,11 +3460,11 @@ ssize_t generic_file_write_iter(struct kiocb *iocb, struct iov_iter *from)
+ 	struct inode *inode = file->f_mapping->host;
+ 	ssize_t ret;
+ 
+-	inode_lock(inode);
++	bpf_down_write(&inode->i_rwsem);
+ 	ret = generic_write_checks(iocb, from);
+ 	if (ret > 0)
+ 		ret = __generic_file_write_iter(iocb, from);
+-	inode_unlock(inode);
++	up_write(&inode->i_rwsem);
+ 
+ 	if (ret > 0)
+ 		ret = generic_write_sync(iocb, ret);

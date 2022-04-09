@@ -1,0 +1,599 @@
+#!/bin/bash
+#
+# kpatch hot patch module management script
+#
+# Copyright (C) 2014 Seth Jennings <sjenning@redhat.com>
+# Copyright (C) 2014 Josh Poimboeuf <jpoimboe@redhat.com>
+#
+# This program is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation; either version 2
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA,
+# 02110-1301, USA.
+
+# This is the kpatch user script that manages installing, loading, and
+# displaying information about kernel patch modules installed on the system.
+
+INSTALLDIR=/var/lib/kpatch
+SCRIPTDIR="$(readlink -f "$(dirname "$(type -p "$0")")")"
+VERSION="0.9.1"
+POST_ENABLE_WAIT=15	# seconds
+POST_SIGNAL_WAIT=60	# seconds
+
+# How many times to try loading the patch if activeness safety check fails.
+MAX_LOAD_ATTEMPTS=5
+# How long to wait before retry, in seconds.
+RETRY_INTERVAL=2
+
+usage_cmd() {
+	printf '   %-20s\n      %s\n' "$1" "$2" >&2
+}
+
+usage () {
+	# ATTENTION ATTENTION ATTENTION ATTENTION ATTENTION ATTENTION
+	# When changing this, please also update the man page.  Thanks!
+	echo "usage: kpatch <command> [<args>]" >&2
+	echo >&2
+	echo "Valid commands:" >&2
+	usage_cmd "install [-k|--kernel-version=<kernel version>] <module>" "install patch module to be loaded at boot"
+	usage_cmd "uninstall [-k|--kernel-version=<kernel version>] <module>" "uninstall patch module"
+	echo >&2
+	usage_cmd "load --all" "load all installed patch modules into the running kernel"
+	usage_cmd "load <module>" "load patch module into the running kernel"
+	usage_cmd "unload --all" "unload all patch modules from the running kernel"
+	usage_cmd "unload <module>" "unload patch module from the running kernel"
+	echo >&2
+	usage_cmd "info <module>" "show information about a patch module"
+	echo >&2
+	usage_cmd "list" "list installed patch modules"
+	echo >&2
+	usage_cmd "signal" "signal/poke any process stalling the current patch transition"
+	echo >&2
+	usage_cmd "version" "display the kpatch version"
+	exit 1
+}
+
+warn() {
+	echo "kpatch: $*" >&2
+}
+
+die() {
+	warn "$@"
+	exit 1
+}
+
+__find_module () {
+	MODULE="$1"
+	[[ -f "$MODULE" ]] && return
+
+	MODULE="$INSTALLDIR/$(uname -r)/$1"
+	[[ -f "$MODULE" ]] && return
+
+	return 1
+}
+
+mod_name () {
+	MODNAME="$(basename "$1")"
+	MODNAME="${MODNAME%.ko}"
+	MODNAME="${MODNAME//-/_}"
+}
+
+find_module () {
+	arg="$1"
+	if [[ "$arg" =~ \.ko ]]; then
+		__find_module "$arg" || return 1
+		mod_name "$MODULE"
+		return
+	else
+		for i in "$INSTALLDIR/$(uname -r)"/*; do
+			mod_name "$i"
+			if [[ "$MODNAME" == "$arg" ]]; then
+				MODULE="$i"
+				return
+			fi
+		done
+	fi
+
+	return 1
+}
+
+find_core_module() {
+	COREMOD="$SCRIPTDIR"/../kmod/core/kpatch.ko
+	[[ -f "$COREMOD" ]] && return
+
+	COREMOD="/usr/local/lib/kpatch/$(uname -r)/kpatch.ko"
+	[[ -f "$COREMOD" ]] && return
+
+	COREMOD="/usr/lib/kpatch/$(uname -r)/kpatch.ko"
+	[[ -f "$COREMOD" ]] && return
+
+	COREMOD="/usr/local/lib/modules/$(uname -r)/extra/kpatch/kpatch.ko"
+	[[ -f "$COREMOD" ]] && return
+
+	COREMOD="/usr/lib/modules/$(uname -r)/extra/kpatch/kpatch.ko"
+	[[ -f "$COREMOD" ]] && return
+
+	return 1
+}
+
+core_loaded () {
+	grep -q -e "T klp_enable_patch" -e "T kpatch_register" /proc/kallsyms
+}
+
+get_module_name () {
+	readelf -p .gnu.linkonce.this_module "$1" | grep '\[.*\]' | awk '{print $3}'
+}
+
+init_sysfs_var() {
+	# If the kernel is configured with CONFIG_LIVEPATCH, use that.
+	# Otherwise, use the kpatch core module (kpatch.ko).
+	if [[ -e /sys/kernel/livepatch ]] ; then
+		# livepatch ABI
+		SYSFS="/sys/kernel/livepatch"
+
+	elif [[ -e /sys/kernel/kpatch/patches ]] ; then
+		# kpatch pre-0.4 ABI
+		SYSFS="/sys/kernel/kpatch/patches"
+
+	else
+		# kpatch 0.4 ABI
+		SYSFS="/sys/kernel/kpatch"
+	fi
+}
+
+verify_module_checksum () {
+	modname="$(get_module_name "$1")"
+	[[ -z "$modname" ]] && return 1
+
+	checksum="$(readelf -p .kpatch.checksum "$1" 2>&1 | grep '\[.*\]' | awk '{print $3}')"
+
+	# Fail checksum match only if both exist and diverge
+	if [[ -n "$checksum" ]] && [[ -e "$SYSFS/${modname}/checksum" ]] ; then
+		sysfs_checksum="$(cat "$SYSFS/${modname}/checksum")"
+		[[ "$checksum" == "$sysfs_checksum" ]] || return 1
+	fi
+
+	return 0
+}
+
+in_transition() {
+	local moddir="$SYSFS/$1"
+	[[ $(cat "$moddir/transition" 2>/dev/null) == "1" ]] && return 0
+	return 1
+}
+
+is_stalled() {
+	local module="$1"
+	local pid="$2"
+	local patch_enabled
+	local patch_state
+
+	patch_enabled="$(cat "$SYSFS/$module/enabled" 2>/dev/null)"
+	patch_state="$(cat "/proc/$pid/patch_state" 2>/dev/null)"
+
+	# No patch transition in progress
+	[[ "$patch_state" == "-1" ]] && return 1
+
+	[[ -z "$patch_enabled" ]] || [[ -z "$patch_state" ]] && return 1
+
+	# Stalls can be determined if the process state does not match
+	# the transition target (ie, "enabled" and "patched", "disabled"
+	# and "unpatched").  The state value enumerations match, so we
+	# can just compare them directly:
+	[[ "$patch_enabled" != "$patch_state" ]] && return 0
+	return 1
+}
+
+get_transition_patch() {
+	local module
+	local modname
+	for module in "$SYSFS"/*; do
+		modname=$(basename "$module")
+		if in_transition "$modname" ; then
+			echo "$modname"
+			return
+		fi
+	done
+}
+
+show_stalled_processes() {
+	local module
+	local proc_task
+	local tid
+
+	module=$(get_transition_patch)
+	[[ -z "$module" ]] && return
+
+	echo ""
+	echo "Stalled processes:"
+	for proc_task in /proc/[0-9]*/task/[0-9]*; do
+		tid=${proc_task#*/task/}
+		is_stalled "$module" "$tid" && echo -e "$tid $(cat "$proc_task"/comm 2>/dev/null)\nstack:\n$(cat "$proc_task"/stack 2>/dev/null)"
+	done
+}
+
+signal_stalled_processes() {
+	local module
+	local proc_task
+	local tid
+
+	module=$(get_transition_patch)
+	[[ -z "$module" ]] && return
+
+	if [[ -e "/sys/kernel/livepatch/$module/signal" ]] ; then
+		echo "signaling stalled process(es):"
+		echo 1 > "/sys/kernel/livepatch/$module/signal"
+	fi
+}
+
+wait_for_patch_transition() {
+	local module="$1"
+	local i
+
+	in_transition "$module" || return 0
+
+	echo "waiting (up to $POST_ENABLE_WAIT seconds) for patch transition to complete..."
+	for (( i=0; i<POST_ENABLE_WAIT; i++ )); do
+		if ! in_transition "$module" ; then
+			echo "transition complete ($i seconds)"
+			return 0
+		fi
+		sleep 1s
+	done
+
+	echo "patch transition has stalled!"
+	signal_stalled_processes
+
+	echo "waiting (up to $POST_SIGNAL_WAIT seconds) for patch transition to complete..."
+	for (( i=0; i<POST_SIGNAL_WAIT; i++ )); do
+		if ! in_transition "$module" ; then
+			echo "transition complete ($i seconds)"
+			return 0
+		fi
+		sleep 1s
+	done
+
+	return 1
+}
+
+load_module () {
+	local module="$1"
+
+	if ! core_loaded; then
+		if modprobe -q kpatch; then
+			echo "loaded core module"
+		else
+			find_core_module || die "can't find core module"
+			echo "loading core module: $COREMOD"
+			insmod "$COREMOD" || die "failed to load core module"
+		fi
+
+		# Now that the core module has been loaded, set $SYSFS to the
+		# correct value based on the loaded core module's ABI.
+		init_sysfs_var
+	fi
+
+	local modname
+	modname="$(get_module_name "$module")"
+	local moddir="$SYSFS/$modname"
+	if [[ -d "$moddir" ]] ; then
+		if [[ "$(cat "${moddir}/enabled")" -eq 0 ]]; then
+			if verify_module_checksum "$module"; then # same checksum
+				echo "module already loaded, re-enabling"
+				echo 1 > "${moddir}/enabled" || die "failed to re-enable module $modname"
+				if ! wait_for_patch_transition "$modname" ; then
+					show_stalled_processes
+					echo "module $modname did not complete its transition, disabling..."
+					echo 0 > "${moddir}/enabled" || die "failed to disable module $modname"
+					wait_for_patch_transition "$modname"
+					die "error: failed to re-enable module $modname (transition stalled), patch disabled"
+				fi
+				return
+			else
+				die "error: cannot re-enable patch module $modname, cannot verify checksum match"
+			fi
+		else
+			echo "module named $modname already loaded and enabled"
+		fi
+	else
+		echo "loading patch module: $module"
+		local i=0
+		while true; do
+			out="$(LC_ALL=C insmod "$module" 2>&1)"
+			[[ -z "$out" ]] && break
+			echo "$out" 1>&2
+			[[ ! "$out" =~ "Device or resource busy" ]] &&
+				die "failed to load module $module"
+
+			# "Device or resource busy" means the activeness safety check
+			# failed.  Retry in a few seconds.
+			i=$((i+1))
+			if [[ $i -eq $MAX_LOAD_ATTEMPTS ]]; then
+				die "failed to load module $module"
+				break
+			else
+				warn "retrying..."
+				sleep $RETRY_INTERVAL
+			fi
+		done
+	fi
+
+	if ! wait_for_patch_transition "$modname" ; then
+		show_stalled_processes
+		echo "module $modname did not complete its transition, unloading..."
+		unload_module "$modname"
+		die "error: failed to load module $modname (transition stalled)"
+	fi
+
+	return 0
+}
+
+disable_patch () {
+	local modname="$1"
+
+	local enabled="$SYSFS/$modname/enabled"
+	if ! [[ -e "$enabled" ]]; then
+	    warn "patch module $modname is not loaded"
+	    return 1
+	fi
+
+	if [[ "$(cat "$enabled")" -eq 1 ]]; then
+		echo "disabling patch module: $modname"
+		local i=0
+		while true; do
+			out="$(export LC_ALL=C; sh -c "echo 0 > $enabled" 2>&1)"
+			[[ -z "$out" ]] && break
+			echo "$out" 1>&2
+			if [[ ! "$out" =~ "Device or resource busy" ]]; then
+				return 1
+			fi
+
+			# "Device or resource busy" means the activeness safety check
+			# failed.  Retry in a few seconds.
+			i=$((i+1))
+			if [[ $i -eq $MAX_LOAD_ATTEMPTS ]]; then
+				return 1
+			else
+				warn "retrying..."
+				sleep $RETRY_INTERVAL
+			fi
+		done
+	fi
+}
+
+disable_patch_strict () {
+	local modname="$1"
+
+	disable_patch "$modname" || die "failed to disable module $modname"
+
+	if ! wait_for_patch_transition "$modname" ; then
+		die "transition stalled for $modname"
+	fi
+}
+
+remove_module () {
+	echo "unloading patch module: $1"
+	# ignore any error here because rmmod can fail if the module used
+	# KPATCH_FORCE_UNSAFE.
+	rmmod "$1" 2> /dev/null || return 0
+}
+
+unload_module () {
+	PATCH="${1//-/_}"
+	PATCH="${PATCH%.ko}"
+	disable_patch_strict "$PATCH"
+	remove_module "$PATCH"
+}
+
+get_module_version() {
+	MODVER="$(modinfo -F vermagic "$1")" || return 1
+	MODVER="${MODVER/ */}"
+}
+
+unset MODULE
+
+# Initialize the $SYSFS var.  This only works if the core module has been
+# loaded.  Otherwise, the value of $SYSFS doesn't matter at this point anyway,
+# and we'll have to call this function again after loading it.
+init_sysfs_var
+
+[[ "$#" -lt 1 ]] && usage
+case "$1" in
+"load")
+	[[ "$#" -ne 2 ]] && usage
+	case "$2" in
+	"--all")
+		for i in "$INSTALLDIR/$(uname -r)"/*.ko; do
+			[[ -e "$i" ]] || continue
+			load_module "$i" || die "failed to load module $i"
+		done
+		;;
+	*)
+		PATCH="$2"
+		find_module "$PATCH" || die "can't find $PATCH"
+		load_module "$MODULE" || die "failed to load module $PATCH"
+		;;
+	esac
+	;;
+
+"unload")
+	[[ "$#" -ne 2 ]] && usage
+	case "$2" in
+	"--all")
+		# Versions of linux < 5.1 livepatching require patches to be
+		# disabled in the inverse order in which they were enabled.
+		while true; do
+			nr_disabled=0
+			for module in "$SYSFS"/*; do
+				modname="$(basename "$module")"
+
+				[[ -e "$module" ]] || continue
+				disable_patch "$modname" || continue
+				if ! wait_for_patch_transition "$modname" ; then
+				    warn "transition stalled for $modname"
+				    continue
+				fi
+				remove_module "$modname"
+				nr_disabled=$((nr_disabled + 1))
+			done
+			if [ $nr_disabled -eq 0 ]; then
+				break
+			fi
+		done
+
+		nr_remaining=0
+		for module in "$SYSFS"/*; do
+			modname="$(basename "$module")"
+
+			[[ -e "$module" ]] || continue
+			nr_remaining=$((nr_remaining + 1))
+			warn "failed to unload module $modname"
+		done
+
+		if [ $nr_remaining -gt 0 ]; then
+			exit 1
+		fi
+		;;
+	*)
+		unload_module "$(basename "$2")" || die "failed to unload module $2"
+		;;
+	esac
+	;;
+
+"install")
+	KVER="$(uname -r)"
+	shift
+	options="$(getopt -o k: -l "kernel-version:" -- "$@")" || die "getopt failed"
+	eval set -- "$options"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-k|--kernel-version)
+			KVER="$2"
+			shift
+			;;
+		--)
+			[[ -z "$2" ]] && die "no module file specified"
+			PATCH="$2"
+			;;
+		esac
+		shift
+	done
+
+	[[ ! -e "$PATCH" ]] && die "$PATCH doesn't exist"
+	[[ "${PATCH: -3}" == ".ko" ]] || die "$PATCH isn't a .ko file"
+
+	get_module_version "$PATCH" || die "modinfo failed"
+	[[ "$KVER" != "$MODVER" ]] && die "invalid module version $MODVER for kernel $KVER"
+
+	[[ -e "$INSTALLDIR/$KVER/$(basename "$PATCH")" ]] && die "$PATCH is already installed"
+
+	echo "installing $PATCH ($KVER)"
+	mkdir -p "$INSTALLDIR/$KVER" || die "failed to create install directory"
+	cp -f "$PATCH" "$INSTALLDIR/$KVER" || die "failed to install module $PATCH"
+	command -v systemctl > /dev/null 2>&1 && systemctl enable kpatch.service
+	;;
+
+"uninstall")
+	KVER="$(uname -r)"
+	shift
+	options="$(getopt -o k: -l "kernel-version:" -- "$@")" || die "getopt failed"
+	eval set -- "$options"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		-k|--kernel-version)
+			KVER="$2"
+			shift
+			;;
+		--)
+			[[ -z "$2" ]] && die "no module file specified"
+			PATCH="$2"
+			[[ "$PATCH" != "$(basename "$PATCH")" ]] && die "please supply patch module name without path"
+			;;
+		esac
+		shift
+	done
+
+	MODULE="$INSTALLDIR/$KVER/$PATCH"
+	if [[ ! -f "$MODULE" ]]; then
+		mod_name "$PATCH"
+		PATCHNAME="$MODNAME"
+		for i in "$INSTALLDIR/$KVER"/*; do
+			mod_name "$i"
+			if [[ "$MODNAME" == "$PATCHNAME" ]]; then
+				MODULE="$i"
+				break
+			fi
+		done
+	fi
+
+	[[ ! -e "$MODULE" ]] && die "$PATCH is not installed for kernel $KVER"
+	
+
+	echo "uninstalling $PATCH ($KVER)"
+	rm -f "$MODULE" || die "failed to uninstall module $PATCH"
+	;;
+
+"list")
+	[[ "$#" -ne 1 ]] && usage
+	echo "Loaded patch modules:"
+	for module in "$SYSFS"/*; do
+		if [[ -e "$module" ]]; then
+			modname=$(basename "$module")
+			if [[ "$(cat "$module/enabled" 2>/dev/null)" -eq 1 ]]; then
+				in_transition "$modname" && state="enabling..." \
+							 || state="enabled"
+			else
+				in_transition "$modname" && state="disabling..." \
+							 || state="disabled"
+			fi
+			echo "$modname [$state]"
+		fi
+	done
+	show_stalled_processes
+	echo ""
+	echo "Installed patch modules:"
+	for kdir in "$INSTALLDIR"/*; do
+		[[ -e "$kdir" ]] || continue
+		for module in "$kdir"/*.ko; do
+			[[ -e "$module" ]] || continue
+			mod_name "$module"
+			echo "$MODNAME ($(basename "$kdir"))"
+		done
+	done
+	;;
+
+"info")
+	[[ "$#" -ne 2 ]] && usage
+	PATCH="$2"
+	find_module "$PATCH" || die "can't find $PATCH"
+	echo "Patch information for $PATCH:"
+	modinfo "$MODULE" || die "failed to get info for module $PATCH"
+	;;
+
+"signal")
+	[[ "$#" -ne 1 ]] && usage
+	signal_stalled_processes
+	;;
+
+"help"|"-h"|"--help")
+	usage
+	;;
+
+"version"|"-v"|"--version")
+	echo "$VERSION"
+	;;
+
+*)
+	echo "subcommand $1 not recognized"
+	usage
+	;;
+esac

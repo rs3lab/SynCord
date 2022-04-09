@@ -1,0 +1,12 @@
+diff --git a/fs/readdir.c b/fs/readdir.c
+index ced679179cac..7fb338324582 100644
+--- a/fs/readdir.c
++++ b/fs/readdir.c
+@@ -173,6 +173,7 @@ static int filldir(struct dir_context *ctx, const char *name, int namlen,
+ 			goto efault;
+ 	}
+ 	dirent = buf->current_dir;
++	asm("nop");
+ 	if (__put_user(d_ino, &dirent->d_ino))
+ 		goto efault;
+ 	if (__put_user(reclen, &dirent->d_reclen))

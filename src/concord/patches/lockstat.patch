@@ -1,0 +1,197 @@
+diff --git a/fs/dcache.c b/fs/dcache.c
+index e88cf0554..6c35d60e4 100644
+--- a/fs/dcache.c
++++ b/fs/dcache.c
+@@ -2890,9 +2890,10 @@ static void __d_move(struct dentry *dentry, struct dentry *target,
+  */
+ void d_move(struct dentry *dentry, struct dentry *target)
+ {
+-	write_seqlock(&rename_lock);
++	extern int num_policy;
++	bpf_write_seqlock(&rename_lock, num_policy);
+ 	__d_move(dentry, target, false);
+-	write_sequnlock(&rename_lock);
++	bpf_write_sequnlock(&rename_lock, num_policy);
+ }
+ EXPORT_SYMBOL(d_move);
+ 
+diff --git a/kernel/bpf/inode.c b/kernel/bpf/inode.c
+index a70f7209c..e38ad4833 100644
+--- a/kernel/bpf/inode.c
++++ b/kernel/bpf/inode.c
+@@ -701,3 +701,96 @@ static int __init bpf_init(void)
+ 	return ret;
+ }
+ fs_initcall(bpf_init);
++
++#include "kpatch-macros.h"
++#define MAX_POLICY 5
++static inline __u64 ptr_to_u64(const void *ptr)
++{
++    return (__u64) (unsigned long) ptr;
++}
++
++static void *get_pinned_bpf_obj(const char *pathname){
++	struct inode *inode;
++	struct path path;
++	void *raw;
++	int ret;
++
++	/* Let's get BPF prog 1 */
++	ret = kern_path(pathname, LOOKUP_FOLLOW, &path);
++	if (ret){
++		printk("[syncord] %s failed\n", pathname);
++		return ERR_PTR(ret);
++	}
++
++	inode = d_backing_inode(path.dentry);
++	ret = inode_permission(inode, ACC_MODE(2));
++	if(ret){
++		printk("[syncord] perm error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	raw = bpf_any_get(inode->i_private, BPF_TYPE_PROG);
++	if(!IS_ERR(raw)){
++		touch_atime(&path);
++	}
++	else{
++		printk("[syncord] raw error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	path_put(&path);
++	return raw;
++}
++
++static int pre_patch_callback(patch_object *obj)
++{
++	extern int num_policy;
++	extern void *bpf_prog_lock_to_enter_slowpath[MAX_POLICY];
++	extern void *bpf_prog_lock_acquired[MAX_POLICY];
++	extern void *bpf_prog_lock_to_release[MAX_POLICY];
++
++	if(num_policy < 4)
++		num_policy++;
++	else
++		return -1;
++
++	bpf_prog_lock_acquired[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/lockstat_lock_acquired");
++	if(IS_ERR(bpf_prog_lock_acquired[num_policy])){
++		printk("[syncord] bpf_policy failed\n");
++		return -1;
++	}
++
++	bpf_prog_lock_to_release[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/lockstat_lock_to_release");
++	if(IS_ERR(bpf_prog_lock_to_release[num_policy])){
++		printk("[concord] bpf_policy failed\n");
++		return -1;
++	}
++
++	bpf_prog_lock_to_enter_slowpath[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/lockstat_to_enter_slow_path");
++	if(IS_ERR(bpf_prog_lock_to_enter_slowpath[num_policy])){
++		printk("[concord] bpf_policy failed\n");
++		return -1;
++	}
++
++	return 0;
++}
++
++static void post_unpatch_callback(patch_object *obj)
++{
++	extern int num_policy;
++	extern void *bpf_prog_lock_to_enter_slowpath[MAX_POLICY];
++	extern void *bpf_prog_lock_acquired[MAX_POLICY];
++	extern void *bpf_prog_lock_to_release[MAX_POLICY];
++
++	bpf_prog_lock_to_enter_slowpath[num_policy] = NULL;
++	bpf_prog_lock_acquired[num_policy] = NULL;
++	bpf_prog_lock_to_release[num_policy] = NULL;
++
++	num_policy--;
++	klp_shadow_free_all(0, NULL);
++}
++
++KPATCH_PRE_PATCH_CALLBACK(pre_patch_callback);
++KPATCH_POST_UNPATCH_CALLBACK(post_unpatch_callback);
+diff --git a/kernel/locking/qspinlock.c b/kernel/locking/qspinlock.c
+index b4e72acef..adbde08f6 100644
+--- a/kernel/locking/qspinlock.c
++++ b/kernel/locking/qspinlock.c
+@@ -27,6 +27,9 @@
+  * Include queued spinlock statistics code
+  */
+ #include "qspinlock_stat.h"
++#include <linux/lock_policy.h>
++#include <linux/filter.h>
++#include <linux/livepatch.h>
+ 
+ /*
+  * The basic principle of a queue-based spinlock can best be understood
+@@ -323,11 +326,41 @@ static void syncord_lock_to_acquire(struct qspinlock *lock, int policy_id)
+ 
+ static void syncord_lock_acquired(struct qspinlock *lock, int policy_id)
+ {
++	struct bpf_prog *prog;
++	prog = bpf_prog_lock_acquired[policy_id];
++
++	struct per_lock_data *pld;
++	pld = klp_shadow_get_or_alloc(lock, 0, sizeof(*pld), GFP_ATOMIC, NULL, NULL);
++
++	struct lock_policy_args args;
++	args.lock_ptr = (unsigned long)lock;
++	args.lock = (void*)lock;
++	args.hold_start = &(pld->hold_start);
++
++	unsigned int cpu = smp_processor_id();
++	args.per_cpu_data = &(pld->per_cpu_data[cpu]);
++
++	int ret = BPF_PROG_RUN(prog, &args);
+ 	return;
+ }
+ 
+ static void syncord_lock_to_release(struct qspinlock *lock, int policy_id)
+ {
++	struct bpf_prog *prog;
++	prog = bpf_prog_lock_to_release[policy_id];
++
++	struct per_lock_data *pld;
++	pld = klp_shadow_get_or_alloc(lock, 0, sizeof(*pld), GFP_ATOMIC, NULL, NULL);
++
++	struct lock_policy_args args;
++	args.lock_ptr = (unsigned long)lock;
++	args.lock = (void*)lock;
++	args.hold_start = &(pld->hold_start);
++
++	unsigned int cpu = smp_processor_id();
++	args.per_cpu_data = &(pld->per_cpu_data[cpu]);
++
++	int ret = BPF_PROG_RUN(prog, &args);
+ 	return;
+ }
+ 
+@@ -339,6 +372,22 @@ static void syncord_lock_released(struct qspinlock *lock, int policy_id)
+ // Fastpath APIs
+ static void syncord_to_enter_slowpath(struct qspinlock *lock, struct mcs_spinlock *node, int policy_id)
+ {
++	struct bpf_prog *prog;
++	prog = bpf_prog_lock_to_enter_slowpath[policy_id];
++
++	struct per_lock_data *pld;
++	pld = klp_shadow_get_or_alloc(lock, 0, sizeof(*pld), GFP_ATOMIC, NULL, NULL);
++
++	struct lock_policy_args args;
++	args.lock_ptr = (unsigned long)lock;
++	args.lock = (void*)lock;
++	args.hold_start = &(pld->hold_start);
++
++	unsigned int cpu = smp_processor_id();
++	args.per_cpu_data = &(pld->per_cpu_data[cpu]);
++
++	int ret = BPF_PROG_RUN(prog, &args);
++
+ 	return;
+ }
+ 

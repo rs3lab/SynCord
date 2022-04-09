@@ -1,0 +1,85 @@
+#!/bin/bash
+
+KPATCH_SLOW=0
+KPATCH_GIT=${KPATCH_GIT:-https://github.com/dynup/kpatch.git}
+KPATCH_REV=${KPATCH_REV:-HEAD}
+LOGDIR="/vagrant/logs"
+
+usage()
+{
+  echo "usage: $(basename "${0}") [options]" >&2
+  echo "-h, --help      This message" >&2
+  echo "-s, --slow      Run all of the tests" >&2
+  echo "-g, --git       Git url to clone from" >&2
+  echo "-r, --revision  Revision to use (HEAD by default)" >&2
+}
+
+options="$(getopt -o "shg:r:" -l "slow,help,git:,revision:" -- "$@")" || "getopt failed"
+
+eval set -- "${options}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -s|--slow)
+      KPATCH_SLOW=1
+      shift
+      ;;
+    -g|--git)
+      KPATCH_GIT="${2}"
+      shift 2
+      ;;
+    -r|--revision)
+      KPATCH_REV="${2}"
+      shift 2
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --)
+      shift
+      break
+      ;;
+  esac
+done
+
+git clone "${KPATCH_GIT}" || exit 1
+
+cd kpatch || exit 1
+
+git fetch origin +refs/pull/*:refs/pull/*
+git reset --hard "${KPATCH_REV}" || exit 1
+
+# shellcheck disable=SC1091
+source test/integration/lib.sh
+
+kpatch_dependencies
+kpatch_separate_disk_cache /dev/vdb /mnt/build
+kpatch_set_ccache_max_size 10G
+
+# Check if we have predownloaded sources and move them to ~/.kpatch dir which
+# is a symlink to a dir on a separate (bigger) volume, suitable for building.
+if [[ -d "${HOME}/src" && -f "${HOME}/src/version" ]]; then
+  cp "${HOME}/src/version" "${HOME}/.kpatch/"
+  mv "${HOME}/src" "${HOME}/.kpatch/"
+fi
+
+# shellcheck disable=SC1091
+source /etc/os-release
+
+if [[ "${NAME}" == "Fedora" ]] && [[ "${VERSION_ID}" -lt 30 ]]; then
+  export BUILDMOD=yes
+fi
+
+if [ ${KPATCH_SLOW} -eq 1 ]; then
+  make integration-slow 2>&1
+else
+  make integration-quick 2>&1
+fi
+
+rc=${PIPESTATUS[0]}
+rm -rf "${LOGDIR}"
+mkdir -p "${LOGDIR}"
+cp ./test/integration/*.log "${LOGDIR}"
+
+exit "${rc}"

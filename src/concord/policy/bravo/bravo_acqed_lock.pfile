@@ -1,0 +1,14 @@
+SEC("lock_rwsem_global")
+int custom_lock_acquired(struct __lock_policy_args *args)
+{
+
+	/* unsigned long time = bpf_ktime_get_ns(); */
+	/* bpf_printk("[acqed] %lu && %lu > %lu ?\n", args->RBias, time, args->InhibitUntil); */
+
+	if(args->RBias == 0){
+		/* bpf_printk("RBias Set\n"); */
+		args->RBias = 1;
+	}
+
+	return 0;
+}

@@ -1,0 +1,54 @@
+diff --git a/kernel/locking/rwsem.c b/kernel/locking/rwsem.c
+index f0e0f48..751be8e 100644
+--- a/kernel/locking/rwsem.c
++++ b/kernel/locking/rwsem.c
+@@ -20,6 +20,9 @@
+ #include <linux/mm_types.h>
+ 
+ #include "rwsem.h"
++#include <linux/lock_policy.h>
++#include <linux/filter.h>
++#include <linux/ktime.h>
+ 
+ /*
+  * Controls the probability for intra-socket lock hand-off. It can be
+@@ -88,7 +91,17 @@ bool numa_cmp_func(struct rwaqm_node *node, struct rwaqm_node *curr)
+ 
+ bool custom_cmp_func(struct rwaqm_node *node, struct rwaqm_node *curr)
+ {
+-	return false;
++	extern void *bpf_prog_custom_cmp_func;
++	struct bpf_prog *prog;
++	prog = bpf_prog_custom_cmp_func;
++
++	/* User need to specify which data to pass. */
++	struct lock_policy_args args;
++	args.nid1= ((struct per_node_data *)(node->bpf_args))->nid;
++	args.nid2 = ((struct per_node_data *)(curr->bpf_args))->nid;
++
++	int ret = BPF_PROG_RUN(prog, &args);
++	return ret;
+ }
+ 
+ // Skip shuffle
+@@ -302,7 +315,7 @@ static inline void shuffle_waiters(struct rwmutex *lock, struct rwaqm_node *node
+ 	break_shuffle_func stop;
+ 
+ 	if(custom){
+-		cmp = &numa_cmp_func;
++		cmp = &custom_cmp_func;
+ 		skip = &default_skip_func;
+ 		stop = &default_break_func;
+ 	}
+@@ -500,7 +513,10 @@ static int __aqm_lock_slowpath(struct rwmutex *lock, long state, int is_reader,
+ 	node->task = current;
+ 
+ 	// Additional data per node
+-	node->bpf_args = NULL;
++	struct per_node_data pnd;
++	pnd.nid = numa_node_id();
++
++	node->bpf_args = &pnd;
+ 
+ 	fastpath_func allow_stealing;
+ 

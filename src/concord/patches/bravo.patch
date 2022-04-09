@@ -1,0 +1,375 @@
+diff --git a/kernel/bpf/inode.c b/kernel/bpf/inode.c
+index a70f7209c..81c4b2c14 100644
+--- a/kernel/bpf/inode.c
++++ b/kernel/bpf/inode.c
+@@ -701,3 +701,98 @@ static int __init bpf_init(void)
+ 	return ret;
+ }
+ fs_initcall(bpf_init);
++
++
++#include "kpatch-macros.h"
++#define MAX_POLICY 5
++
++static inline __u64 ptr_to_u64(const void *ptr)
++{
++    return (__u64) (unsigned long) ptr;
++}
++
++static void *get_pinned_bpf_obj(const char *pathname){
++	struct inode *inode;
++	struct path path;
++	void *raw;
++	int ret;
++
++	// Let's get BPF prog 1
++	ret = kern_path(pathname, LOOKUP_FOLLOW, &path);
++	if (ret){
++		printk("[syncord] %s failed\n", pathname);
++		return ERR_PTR(ret);
++	}
++
++	inode = d_backing_inode(path.dentry);
++	ret = inode_permission(inode, ACC_MODE(2));
++	if(ret){
++		printk("[syncord] perm error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	raw = bpf_any_get(inode->i_private, BPF_TYPE_PROG);
++	if(!IS_ERR(raw)){
++		touch_atime(&path);
++	}
++	else{
++		printk("[syncord] raw error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	path_put(&path);
++	return raw;
++}
++
++static int pre_patch_callback(patch_object *obj)
++{
++	extern int num_policy;
++	extern void *bpf_prog_lock_bypass_acquire_read[MAX_POLICY];
++	extern void *bpf_prog_lock_bypass_release_read[MAX_POLICY];
++	extern void *bpf_prog_lock_acquired_read[MAX_POLICY];
++
++	if(num_policy < 4)
++		num_policy++;
++	else
++		return -1;
++
++	bpf_prog_lock_bypass_acquire_read[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/bravo_bypass_acq_lock");
++	if(IS_ERR(bpf_prog_lock_bypass_acquire_read[num_policy])){
++		printk("[syncord] bpf_policy failed\n");
++		return -1;
++	}
++
++	bpf_prog_lock_acquired_read[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/bravo_acqed_lock");
++	if(IS_ERR(bpf_prog_lock_acquired_read[num_policy])){
++		printk("[syncord] bpf_policy failed\n");
++		return -1;
++	}
++
++	bpf_prog_lock_bypass_release_read[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/bravo_bypass_release_lock");
++	if(IS_ERR(bpf_prog_lock_bypass_release_read[num_policy])){
++		printk("[syncord] bpf_policy failed\n");
++		return -1;
++	}
++
++	return 0;
++}
++
++static void post_unpatch_callback(patch_object *obj)
++{
++	extern int num_policy;
++	extern void *bpf_prog_lock_bypass_acquire_read[MAX_POLICY];
++	extern void *bpf_prog_lock_bypass_release_read[MAX_POLICY];
++	extern void *bpf_prog_lock_acquired_read[MAX_POLICY];
++
++	bpf_prog_lock_bypass_acquire_read[num_policy] = NULL;
++	bpf_prog_lock_bypass_release_read[num_policy] = NULL;
++	bpf_prog_lock_acquired_read[num_policy] = NULL;
++
++	num_policy--;
++	klp_shadow_free_all(0, NULL);
++}
++
++KPATCH_PRE_PATCH_CALLBACK(pre_patch_callback);
++KPATCH_POST_UNPATCH_CALLBACK(post_unpatch_callback);
+diff --git a/kernel/locking/rwsem.c b/kernel/locking/rwsem.c
+index d5ba6b8d6..c767b40d2 100644
+--- a/kernel/locking/rwsem.c
++++ b/kernel/locking/rwsem.c
+@@ -30,6 +30,9 @@
+ 
+ #include "rwsem.h"
+ #include "lock_events.h"
++#include <linux/lock_policy.h>
++#include <linux/filter.h>
++#include <linux/livepatch.h>
+ 
+ #define MAX_POLICY 5
+ void *bpf_prog_lock_to_acquire_read[MAX_POLICY];
+@@ -64,6 +67,85 @@ EXPORT_SYMBOL(bpf_prog_lock_bypass_release_read);
+ EXPORT_SYMBOL(bpf_prog_lock_bypass_acquire_write);
+ EXPORT_SYMBOL(bpf_prog_lock_bypass_release_write);
+ 
++int custom_lock_bypass_acquire(struct rw_semaphore *lock, int policy_id){
++	struct bpf_prog *prog;
++	prog = bpf_prog_lock_bypass_acquire_read[policy_id];
++
++	struct per_lock_data *pld;
++	pld = klp_shadow_get(lock, 0);
++
++	if(!pld) return 0;
++
++	unsigned int cpu = smp_processor_id();
++
++	struct lock_policy_args args;
++	args.per_cpu_data = &(pld->per_cpu_data[cpu]);
++	args.RBias = &(pld->RBias);
++
++	int ret = BPF_PROG_RUN(prog, &args);
++	return ret;
++}
++
++void custom_lock_acquired(struct rw_semaphore *lock, int policy_id){
++	struct bpf_prog *prog;
++	prog = bpf_prog_lock_acquired_read[policy_id];
++
++	struct per_lock_data *pld;
++	pld = klp_shadow_get_or_alloc(lock, 0, sizeof(*pld), GFP_ATOMIC, NULL, NULL);
++
++	unsigned int cpu = smp_processor_id();
++
++	struct lock_policy_args args;
++	args.per_cpu_data = &(pld->per_cpu_data[cpu]);
++	args.RBias = &(pld->RBias);
++
++	int ret = BPF_PROG_RUN(prog, &args);
++	return;
++}
++
++int custom_lock_acquired_writer(struct rw_semaphore *lock){
++	struct per_lock_data *pld;
++	pld = klp_shadow_get_or_alloc(lock, 0, sizeof(*pld), GFP_ATOMIC, NULL, NULL);
++
++	if(pld->RBias == 1){
++		pld->RBias = 0;
++		//unsigned long start = ktime_get_mono_fast_ns();
++
++		int i;
++		for(i=0; i<224; i++){
++			while(pld->per_cpu_data[i].field != 0){
++				cpu_relax();
++
++				if (need_resched())
++					schedule_preempt_disabled();
++			}
++			if (need_resched())
++				schedule_preempt_disabled();
++			cpu_relax();
++		}
++	}
++	return 0;
++}
++
++int custom_lock_bypass_release(struct rw_semaphore *lock, int policy_id){
++	struct bpf_prog *prog;
++	prog = bpf_prog_lock_bypass_release_read[policy_id];
++
++	struct per_lock_data *pld;
++	pld = klp_shadow_get(lock, 0);
++	if(!pld) return 0;
++
++	unsigned int cpu = smp_processor_id();
++
++	struct lock_policy_args args;
++	args.per_cpu_data = &(pld->per_cpu_data[cpu]);
++	args.RBias = &(pld->RBias);
++
++	int ret = BPF_PROG_RUN(prog, &args);
++
++	return ret;
++}
++
+ /*
+  * The least significant 3 bits of the owner value has the following
+  * meanings when set.
+@@ -1525,22 +1607,33 @@ static inline void __downgrade_write(struct rw_semaphore *sem)
+ void down_read(struct rw_semaphore *sem)
+ {
+ 	might_sleep();
+-	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
+ 
++	if(custom_lock_bypass_acquire(sem, 1)){
++		return;
++	}
++
++	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
+ 	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
++
++	custom_lock_acquired(sem, 1);
+ }
+ EXPORT_SYMBOL(down_read);
+ 
+ int down_read_killable(struct rw_semaphore *sem)
+ {
+ 	might_sleep();
+-	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
+ 
++	if(custom_lock_bypass_acquire(sem, 1)){
++		return 0;
++	}
++
++	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
+ 	if (LOCK_CONTENDED_RETURN(sem, __down_read_trylock, __down_read_killable)) {
+ 		rwsem_release(&sem->dep_map, 1, _RET_IP_);
+ 		return -EINTR;
+ 	}
+ 
++	custom_lock_acquired(sem, 1);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(down_read_killable);
+@@ -1550,10 +1643,18 @@ EXPORT_SYMBOL(down_read_killable);
+  */
+ int down_read_trylock(struct rw_semaphore *sem)
+ {
++	if(custom_lock_bypass_acquire(sem, 1)){
++		//bypass underlying lock
++		/* rwsem_set_reader_owned(sem); */
++		return 1;
++	}
++
+ 	int ret = __down_read_trylock(sem);
+ 
+-	if (ret == 1)
++	if (ret == 1){
+ 		rwsem_acquire_read(&sem->dep_map, 0, 1, _RET_IP_);
++		custom_lock_acquired(sem, 1);
++	}
+ 	return ret;
+ }
+ EXPORT_SYMBOL(down_read_trylock);
+@@ -1566,6 +1667,8 @@ void down_write(struct rw_semaphore *sem)
+ 	might_sleep();
+ 	rwsem_acquire(&sem->dep_map, 0, 0, _RET_IP_);
+ 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
++
++	custom_lock_acquired_writer(sem);
+ }
+ EXPORT_SYMBOL(down_write);
+ 
+@@ -1583,6 +1686,7 @@ int down_write_killable(struct rw_semaphore *sem)
+ 		return -EINTR;
+ 	}
+ 
++	custom_lock_acquired_writer(sem);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(down_write_killable);
+@@ -1594,8 +1698,10 @@ int down_write_trylock(struct rw_semaphore *sem)
+ {
+ 	int ret = __down_write_trylock(sem);
+ 
+-	if (ret == 1)
++	if (ret == 1){
+ 		rwsem_acquire(&sem->dep_map, 0, 1, _RET_IP_);
++		custom_lock_acquired_writer(sem);
++	}
+ 
+ 	return ret;
+ }
+@@ -1606,6 +1712,10 @@ EXPORT_SYMBOL(down_write_trylock);
+  */
+ void up_read(struct rw_semaphore *sem)
+ {
++	if(custom_lock_bypass_release(sem, 1)){
++		return;
++	}
++
+ 	rwsem_release(&sem->dep_map, 1, _RET_IP_);
+ 	__up_read(sem);
+ }
+@@ -1626,8 +1736,10 @@ EXPORT_SYMBOL(up_write);
+  */
+ void downgrade_write(struct rw_semaphore *sem)
+ {
+-	lock_downgrade(&sem->dep_map, _RET_IP_);
+-	__downgrade_write(sem);
++	/** lock_downgrade(&sem->dep_map, _RET_IP_); */
++	/** __downgrade_write(sem); */
++	up_write(sem);
++	down_read(sem);
+ }
+ EXPORT_SYMBOL(downgrade_write);
+ 
+@@ -1636,8 +1748,14 @@ EXPORT_SYMBOL(downgrade_write);
+ void down_read_nested(struct rw_semaphore *sem, int subclass)
+ {
+ 	might_sleep();
++
++	if(custom_lock_bypass_acquire(sem, 1)){
++		return;
++	}
++
+ 	rwsem_acquire_read(&sem->dep_map, subclass, 0, _RET_IP_);
+ 	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
++	custom_lock_acquired(sem, 1);
+ }
+ EXPORT_SYMBOL(down_read_nested);
+ 
+@@ -1646,14 +1764,21 @@ void _down_write_nest_lock(struct rw_semaphore *sem, struct lockdep_map *nest)
+ 	might_sleep();
+ 	rwsem_acquire_nest(&sem->dep_map, 0, 0, nest, _RET_IP_);
+ 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
++	custom_lock_acquired_writer(sem);
+ }
+ EXPORT_SYMBOL(_down_write_nest_lock);
+ 
+ void down_read_non_owner(struct rw_semaphore *sem)
+ {
+ 	might_sleep();
++
++	if(custom_lock_bypass_acquire(sem, 1)){
++		return 0;
++	}
++
+ 	__down_read(sem);
+ 	__rwsem_set_reader_owned(sem, NULL);
++	custom_lock_acquired(sem, 1);
+ }
+ EXPORT_SYMBOL(down_read_non_owner);
+ 
+@@ -1662,6 +1787,7 @@ void down_write_nested(struct rw_semaphore *sem, int subclass)
+ 	might_sleep();
+ 	rwsem_acquire(&sem->dep_map, subclass, 0, _RET_IP_);
+ 	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
++	custom_lock_acquired_writer(sem);
+ }
+ EXPORT_SYMBOL(down_write_nested);
+ 
+@@ -1676,12 +1802,17 @@ int down_write_killable_nested(struct rw_semaphore *sem, int subclass)
+ 		return -EINTR;
+ 	}
+ 
++	custom_lock_acquired_writer(sem);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(down_write_killable_nested);
+ 
+ void up_read_non_owner(struct rw_semaphore *sem)
+ {
++	if(custom_lock_bypass_release(sem, 1)){
++		return;
++	}
++
+ 	DEBUG_RWSEMS_WARN_ON(!is_rwsem_reader_owned(sem), sem);
+ 	__up_read(sem);
+ }

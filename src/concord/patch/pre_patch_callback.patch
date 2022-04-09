@@ -1,0 +1,66 @@
+diff --git a/kernel/bpf/inode.c b/kernel/bpf/inode.c
+index a70f720..d5dfc26 100644
+--- a/kernel/bpf/inode.c
++++ b/kernel/bpf/inode.c
+@@ -701,3 +701,61 @@ static int __init bpf_init(void)
+ 	return ret;
+ }
+ fs_initcall(bpf_init);
++
++
++#include "kpatch-macros.h"
++
++static inline __u64 ptr_to_u64(const void *ptr)
++{
++    return (__u64) (unsigned long) ptr;
++}
++
++static void *get_pinned_bpf_obj(const char *pathname){
++	struct inode *inode;
++	struct path path;
++	void *raw;
++	int ret;
++
++	/* Let's get BPF prog 1 */
++	ret = kern_path(pathname, LOOKUP_FOLLOW, &path);
++	if (ret){
++		printk("[concord] %s failed\n", pathname);
++		return ERR_PTR(ret);
++	}
++
++	inode = d_backing_inode(path.dentry);
++	ret = inode_permission(inode, ACC_MODE(2));
++	if(ret){
++		printk("[concord] perm error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	raw = bpf_any_get(inode->i_private, BPF_TYPE_PROG);
++	if(!IS_ERR(raw)){
++		touch_atime(&path);
++	}
++	else{
++		printk("[concord] raw error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	path_put(&path);
++	return raw;
++}
++
++static int pre_patch_callback(patch_object *obj)
++{
++	extern void *bpf_prog_${API_NAME};
++
++	bpf_prog_${API_NAME} = get_pinned_bpf_obj("/sys/fs/bpf/${POLICY_NAME}");
++	if(IS_ERR(bpf_prog_${API_NAME})){
++		printk("[concord] bpf_policy failed\n");
++		return -1;
++	}
++
++	return 0;
++}
++
++KPATCH_PRE_PATCH_CALLBACK(pre_patch_callback);
