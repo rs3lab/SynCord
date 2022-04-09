@@ -1,0 +1,21 @@
+---
+---
+
+@import "jekyll-theme-minimal";
+
+@media print, screen and (max-width: 1360px) {
+	div.navigation {
+        position: absolute;
+        right: 100px;
+        top: 52px;
+    }
+    div.navigation ul {
+        position: static;
+    }
+}
+
+@media print, screen and (max-width: 720px) {
+    div.navigation {
+        position: static;
+    }
+}
