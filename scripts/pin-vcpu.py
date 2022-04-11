@@ -21,7 +21,7 @@ def pin_proc(pid, core):
         psutil.Process(pid).cpu_affinity([core])
     except ValueError as e:
         print >> sys.stderr, e
-            sys.exit(1)
+        sys.exit(1)
 
 
 # 1 --> port number
@@ -29,7 +29,7 @@ def pin_proc(pid, core):
 
 query = qmp.QMPQuery("localhost:%s" % (sys.argv[1]))
 response = query.cmd("query-cpus")['return']
-o_cpus = [x for x in range(sys.argv[2])]
+o_cpus = [x for x in range(int(sys.argv[2]))]
 
 for i in range(int(sys.argv[2])):
     pin_proc(int(response[i]['thread_id']), o_cpus[i])
