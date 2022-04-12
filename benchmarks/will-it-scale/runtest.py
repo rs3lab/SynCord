@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 import time
 import subprocess
@@ -54,45 +54,46 @@ class linux_stat():
 duration=5
 
 if len(sys.argv) != 2:
-    print >> sys.stderr, 'Usage: runtest.py <testcase>'
+    print('Usage: runtest.py <testcase>', file=sys.stderr)
     sys.exit(1)
 cmd = sys.argv[1]
 
-nr_cores = int(subprocess.check_output("lscpu -e=cpu | wc -l", shell=True).strip().decode()) -1
+nr_cores = int(subprocess.check_output("lscpu -e=cpu | wc -l", shell=True,).strip().decode()) -1
 nr_nodes = int(subprocess.check_output("lscpu -e=node | sort -u | wc -l", shell=True).strip().decode()) -1
 cores_per_socket = nr_cores / nr_nodes
 
-print "(num_cores, num_nodes, cores_per_socket) = (%d, %d, %d)" % (nr_cores, nr_nodes,
-        cores_per_socket)
+print ("(num_cores, num_nodes, cores_per_socket) = (%d, %d, %d)" % (nr_cores, nr_nodes,
+        cores_per_socket))
 
 setarch = 'setarch linux64 -R'
 try:
     retcode = subprocess.call(setarch + " /bin/true", shell=True)
-except OSError, e:
+except OSError as e:
     retcode = -1
 
 if retcode != 0:
     setarch = ''
-    print >> sys.stderr, 'WARNING: setarch -R failed, address space randomization may cause variability'
+    print('WARNING: setarch -R failed, address space randomization may cause variability',
+            file=sys.stderr)
 
-pipe = subprocess.Popen('uname -m', shell=True, stdout=subprocess.PIPE).stdout
+pipe = subprocess.Popen('uname -m', shell=True, stdout=subprocess.PIPE, text=True).stdout
 arch = pipe.readline().rstrip(os.linesep)
 pipe.close()
 
 if arch == 'ppc64':
-    pipe = subprocess.Popen('ppc64_cpu --smt 2>&1', shell=True, stdout=subprocess.PIPE).stdout
+    pipe = subprocess.Popen('ppc64_cpu --smt 2>&1', shell=True, stdout=subprocess.PIPE, text=True).stdout
     smt_status = pipe.readline()
     pipe.close()
     if 'off' not in smt_status:
-        print >> sys.stderr, 'WARNING: SMT enabled, suggest disabling'
+        print('WARNING: SMT enabled, suggest disabling', file=sys.stderr)
 
-print 'tasks,processes,processes_idle,threads,threads_idle,linear'
-print '0,0,100,0,100,0'
+print('tasks,processes,processes_idle,threads,threads_idle,linear')
+print('0,0,100,0,100,0')
 
 for i in data_points:
     c = './build/%s_processes -t %d -s %d -n %d' % (cmd, i, duration, cores_per_socket)
     before = linux_stat()
-    pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE).stdout
+    pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
     processes_avg = -1
     for line in pipe.readlines():
         if 'testcase:' in line:
@@ -110,7 +111,7 @@ for i in data_points:
 
     c = './build/%s_threads -t %d -s %d -n %d' % (cmd, i, duration, cores_per_socket)
     before = linux_stat()
-    pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE).stdout
+    pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
     threads_avg = -1
     for line in pipe.readlines():
         if 'average:' in line:
@@ -123,4 +124,5 @@ for i in data_points:
     if i == 1:
         linear = max(processes_avg, threads_avg)
 
-    print '%d,%d,%0.2f,%d,%0.2f,%d' % (i, processes_avg, processes_idle, threads_avg, threads_idle, linear * i)
+    print('%d,%d,%0.2f,%d,%0.2f,%d' % (i, processes_avg, processes_idle, threads_avg, threads_idle,
+        linear * i))
