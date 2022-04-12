@@ -1,0 +1,8 @@
+build/
+*_processes
+*_threads
+tests/*.o
+*.csv
+*.title
+*.html
+gmon.out
