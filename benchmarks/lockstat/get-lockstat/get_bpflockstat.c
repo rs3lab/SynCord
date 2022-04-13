@@ -30,8 +30,8 @@ struct data_t{
 
 static void print_stack(unsigned long *key, struct data_t *data)
 {
-	printf("%16p %15lu %15lu %15lu %15lu %10lu %10lu %10lu %10lu %10lu %10lu\n",
-			key,
+	printf("%20p %15lu %15lu %15lu %15lu %10lu %10lu %10lu %10lu %10lu %10lu\n",
+			*key,
 			data->contentions, data->con_bounces, data->acquisitions, data->acq_bounces,
 			data->waittime.min, data->waittime.max, data->waittime.total,
 			data->holdtime.min, data->holdtime.max, data->holdtime.total);
@@ -42,8 +42,8 @@ static void print_stacks(int fd)
 	unsigned long key, next_key;
 	struct data_t data;
 
-	printf("==================================================================================================================================================\n");
-	printf("%16s ", "lock addr");
+	printf("======================================================================================================================================================\n");
+	printf("%20s ", "lock addr");
 
 	printf("%15s ", "contentions");
 	printf("%15s ", "con-bounces");
@@ -57,7 +57,7 @@ static void print_stacks(int fd)
 	printf("%10s ", "hold-max");
 	printf("%10s ", "hold-tot");
 
-	printf("\n==================================================================================================================================================\n");
+	printf("\n======================================================================================================================================================\n");
 
 	while (bpf_map_get_next_key(fd, &key, &next_key) == 0) {
 		int res = bpf_map_lookup_elem(fd, &next_key, &data);
