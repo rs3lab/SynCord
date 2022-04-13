@@ -106,19 +106,19 @@ index d5ba6b8d6..c767b40d2 100644
 --- a/kernel/locking/rwsem.c
 +++ b/kernel/locking/rwsem.c
 @@ -30,6 +30,9 @@
- 
+
  #include "rwsem.h"
  #include "lock_events.h"
 +#include <linux/lock_policy.h>
 +#include <linux/filter.h>
 +#include <linux/livepatch.h>
- 
+
  #define MAX_POLICY 5
  void *bpf_prog_lock_to_acquire_read[MAX_POLICY];
 @@ -64,6 +67,85 @@ EXPORT_SYMBOL(bpf_prog_lock_bypass_release_read);
  EXPORT_SYMBOL(bpf_prog_lock_bypass_acquire_write);
  EXPORT_SYMBOL(bpf_prog_lock_bypass_release_write);
- 
+
 +int custom_lock_bypass_acquire(struct rw_semaphore *lock, int policy_id){
 +	struct bpf_prog *prog;
 +	prog = bpf_prog_lock_bypass_acquire_read[policy_id];
@@ -164,7 +164,7 @@ index d5ba6b8d6..c767b40d2 100644
 +		//unsigned long start = ktime_get_mono_fast_ns();
 +
 +		int i;
-+		for(i=0; i<224; i++){
++		for(i=0; i<NR_CPUS; i++){
 +			while(pld->per_cpu_data[i].field != 0){
 +				cpu_relax();
 +
@@ -206,7 +206,7 @@ index d5ba6b8d6..c767b40d2 100644
  {
  	might_sleep();
 -	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
- 
+
 +	if(custom_lock_bypass_acquire(sem, 1)){
 +		return;
 +	}
@@ -217,12 +217,12 @@ index d5ba6b8d6..c767b40d2 100644
 +	custom_lock_acquired(sem, 1);
  }
  EXPORT_SYMBOL(down_read);
- 
+
  int down_read_killable(struct rw_semaphore *sem)
  {
  	might_sleep();
 -	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
- 
+
 +	if(custom_lock_bypass_acquire(sem, 1)){
 +		return 0;
 +	}
@@ -232,7 +232,7 @@ index d5ba6b8d6..c767b40d2 100644
  		rwsem_release(&sem->dep_map, 1, _RET_IP_);
  		return -EINTR;
  	}
- 
+
 +	custom_lock_acquired(sem, 1);
  	return 0;
  }
@@ -248,7 +248,7 @@ index d5ba6b8d6..c767b40d2 100644
 +	}
 +
  	int ret = __down_read_trylock(sem);
- 
+
 -	if (ret == 1)
 +	if (ret == 1){
  		rwsem_acquire_read(&sem->dep_map, 0, 1, _RET_IP_);
@@ -265,11 +265,11 @@ index d5ba6b8d6..c767b40d2 100644
 +	custom_lock_acquired_writer(sem);
  }
  EXPORT_SYMBOL(down_write);
- 
+
 @@ -1583,6 +1686,7 @@ int down_write_killable(struct rw_semaphore *sem)
  		return -EINTR;
  	}
- 
+
 +	custom_lock_acquired_writer(sem);
  	return 0;
  }
@@ -277,13 +277,13 @@ index d5ba6b8d6..c767b40d2 100644
 @@ -1594,8 +1698,10 @@ int down_write_trylock(struct rw_semaphore *sem)
  {
  	int ret = __down_write_trylock(sem);
- 
+
 -	if (ret == 1)
 +	if (ret == 1){
  		rwsem_acquire(&sem->dep_map, 0, 1, _RET_IP_);
 +		custom_lock_acquired_writer(sem);
 +	}
- 
+
  	return ret;
  }
 @@ -1606,6 +1712,10 @@ EXPORT_SYMBOL(down_write_trylock);
@@ -309,7 +309,7 @@ index d5ba6b8d6..c767b40d2 100644
 +	down_read(sem);
  }
  EXPORT_SYMBOL(downgrade_write);
- 
+
 @@ -1636,8 +1748,14 @@ EXPORT_SYMBOL(downgrade_write);
  void down_read_nested(struct rw_semaphore *sem, int subclass)
  {
@@ -324,7 +324,7 @@ index d5ba6b8d6..c767b40d2 100644
 +	custom_lock_acquired(sem, 1);
  }
  EXPORT_SYMBOL(down_read_nested);
- 
+
 @@ -1646,14 +1764,21 @@ void _down_write_nest_lock(struct rw_semaphore *sem, struct lockdep_map *nest)
  	might_sleep();
  	rwsem_acquire_nest(&sem->dep_map, 0, 0, nest, _RET_IP_);
@@ -332,7 +332,7 @@ index d5ba6b8d6..c767b40d2 100644
 +	custom_lock_acquired_writer(sem);
  }
  EXPORT_SYMBOL(_down_write_nest_lock);
- 
+
  void down_read_non_owner(struct rw_semaphore *sem)
  {
  	might_sleep();
@@ -346,7 +346,7 @@ index d5ba6b8d6..c767b40d2 100644
 +	custom_lock_acquired(sem, 1);
  }
  EXPORT_SYMBOL(down_read_non_owner);
- 
+
 @@ -1662,6 +1787,7 @@ void down_write_nested(struct rw_semaphore *sem, int subclass)
  	might_sleep();
  	rwsem_acquire(&sem->dep_map, subclass, 0, _RET_IP_);
@@ -354,16 +354,16 @@ index d5ba6b8d6..c767b40d2 100644
 +	custom_lock_acquired_writer(sem);
  }
  EXPORT_SYMBOL(down_write_nested);
- 
+
 @@ -1676,12 +1802,17 @@ int down_write_killable_nested(struct rw_semaphore *sem, int subclass)
  		return -EINTR;
  	}
- 
+
 +	custom_lock_acquired_writer(sem);
  	return 0;
  }
  EXPORT_SYMBOL(down_write_killable_nested);
- 
+
  void up_read_non_owner(struct rw_semaphore *sem)
  {
 +	if(custom_lock_bypass_release(sem, 1)){
