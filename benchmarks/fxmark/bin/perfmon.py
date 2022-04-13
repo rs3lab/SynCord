@@ -122,9 +122,9 @@ class PerfMon(object):
             fd.flush()
 
     def _get_cpu_stat(self):
-        # According to Linux Documentation, 
+        # According to Linux Documentation,
         # /proc/stat is as follows;
-        # - user: normal processes executing in user mode       
+        # - user: normal processes executing in user mode
         # - nice: niced processes executing in user mode
         # - system: processes executing in kernel mode
         # - idle: twiddling thumbs
@@ -227,7 +227,7 @@ if __name__ == "__main__":
     # XXX. option parsing for level, ldir, and lfile
 
     # get command
-    if len(sys.argv) is not 2:
+    if len(sys.argv) != 2:
         exit(1)
     cmd = sys.argv[1]
 
