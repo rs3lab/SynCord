@@ -29,6 +29,7 @@ if __name__ == '__main__':
                     run = re.findall('[0-9.]+', line)
                     stats.append(run[0])
 
-            stats.append(0)
-
-            print("{}, {}, {}, {}".format(i, stats[0], stats[1], stats[2]))
+            if i == 1:
+                print("{}, {}, {}, {}".format(i, stats[0], 0, stats[1]))
+            else:
+                print("{}, {}, {}, {}".format(i, stats[0], stats[1], stats[2]))
