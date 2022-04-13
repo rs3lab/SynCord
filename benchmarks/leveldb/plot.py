@@ -1,22 +1,34 @@
+#!/usr/bin/env python3
+
 import os
 import string
 import sys
 import re
 
-cores = [1,2,4,8,16,28,56,84,112,140,168,196,224]
-
 if __name__ == '__main__':
     dir = sys.argv[1]
+    core = []
 
-    print("#num_threads, ops/s")
+    filenames = next(os.walk(dir), (None, None, []))[2]
 
-    for i in cores:
-        dir_path = "./"+dir+"/readrandom."+str(i)
+    for filename in filenames:
+        core.append(int(os.path.splitext(filename)[1][1:]))
+
+    core.sort()
+
+    print("#num_threads, fast, slow, tot ops/s")
+    for i in core:
+        file = "./"+dir+"/readrandom."+str(i)
         #  print(dir_path)
-        with open(dir_path) as f:
+        stats = []
+        with open(file) as f:
             lines = f.readlines()
 
             for line in lines:
                 if line.startswith('readrandom'):
                     run = re.findall('[0-9.]+', line)
-                    print("{}, {}".format(i, run[0]))
+                    stats.append(run[0])
+
+            stats.append(0)
+
+            print("{}, {}, {}, {}".format(i, stats[0], stats[1], stats[2]))
