@@ -1,0 +1,5 @@
+SEC("lock_qspinlock_cmp")
+bool custom_cmp_func(struct __lock_policy_args *args)
+{
+    return (args->numa_node == args->next_numa_node);
+}
