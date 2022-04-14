@@ -1,0 +1,8 @@
+SEC("lock_qspinlock")
+bool custom_should_reorder(struct __lock_policy_args *args)
+{
+	int numa_node = args->numa_node;
+	int next_numa_node = args->next_numa_node;
+
+	return (next_numa_node != numa_node && next_numa_node != 0xffff);
+}

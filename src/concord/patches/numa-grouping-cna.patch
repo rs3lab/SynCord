@@ -1,0 +1,133 @@
+diff --git a/kernel/bpf/inode.c b/kernel/bpf/inode.c
+index a70f7209c..bdc0b3c4a 100644
+--- a/kernel/bpf/inode.c
++++ b/kernel/bpf/inode.c
+@@ -701,3 +701,79 @@ static int __init bpf_init(void)
+ 	return ret;
+ }
+ fs_initcall(bpf_init);
++
++
++#include "kpatch-macros.h"
++#define MAX_POLICY 5
++
++static inline __u64 ptr_to_u64(const void *ptr)
++{
++    return (__u64) (unsigned long) ptr;
++}
++
++static void *get_pinned_bpf_obj(const char *pathname){
++	struct inode *inode;
++	struct path path;
++	void *raw;
++	int ret;
++
++	/* Let's get BPF prog 1 */
++	ret = kern_path(pathname, LOOKUP_FOLLOW, &path);
++	if (ret){
++		printk("[syncord] %s failed\n", pathname);
++		return ERR_PTR(ret);
++	}
++
++	inode = d_backing_inode(path.dentry);
++	ret = inode_permission(inode, ACC_MODE(2));
++	if(ret){
++		printk("[syncord] perm error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	raw = bpf_any_get(inode->i_private, BPF_TYPE_PROG);
++	if(!IS_ERR(raw)){
++		touch_atime(&path);
++	}
++	else{
++		printk("[syncord] raw error\n");
++		path_put(&path);
++		return ERR_PTR(ret);
++	}
++
++	path_put(&path);
++	return raw;
++}
++
++static int pre_patch_callback(patch_object *obj)
++{
++	extern int num_policy;
++	extern void *bpf_prog_should_reorder[MAX_POLICY];
++
++	if(num_policy < 4)
++		num_policy++;
++	else
++		return -1;
++
++	bpf_prog_should_reorder[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/numa-grouping-cna");
++	if(IS_ERR(bpf_prog_should_reorder[num_policy])){
++		printk("[syncord] bpf_policy failed\n");
++		return -1;
++	}
++
++	return 0;
++}
++
++static void post_unpatch_callback(patch_object *obj) {
++	extern int num_policy;
++	extern void *bpf_prog_should_reorder[MAX_POLICY];
++
++	bpf_prog_should_reorder[num_policy] = NULL;
++
++	num_policy--;
++	klp_shadow_free_all(0, NULL);
++}
++
++KPATCH_PRE_PATCH_CALLBACK(pre_patch_callback);
++KPATCH_POST_UNPATCH_CALLBACK(post_unpatch_callback);
+diff --git a/kernel/locking/qspinlock.c b/kernel/locking/qspinlock.c
+index 92544672f..8710b28d3 100644
+--- a/kernel/locking/qspinlock.c
++++ b/kernel/locking/qspinlock.c
+@@ -392,7 +392,7 @@ void queued_spin_lock(struct qspinlock *lock)
+ 	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL)))
+ 		return;
+ 
+-	queued_spin_lock_slowpath(lock, val, 0, 0);
++	queued_spin_lock_slowpath(lock, val, 1, num_policy);
+ }
+ EXPORT_SYMBOL(queued_spin_lock);
+ 
+diff --git a/kernel/locking/qspinlock_cna.c b/kernel/locking/qspinlock_cna.c
+index d48e6a1be..80f03292e 100644
+--- a/kernel/locking/qspinlock_cna.c
++++ b/kernel/locking/qspinlock_cna.c
+@@ -9,6 +9,10 @@
+ #include <linux/sched/rt.h>
+ #include <linux/random.h>
+ 
++#include <linux/lock_policy.h>
++#include <linux/filter.h>
++#include <linux/livepatch.h>
++
+ /*
+  * Implement a NUMA-aware version of MCS (aka CNA, or compact NUMA-aware lock).
+  *
+@@ -275,7 +279,19 @@ EXPORT_SYMBOL(bpf_prog_should_reorder);
+ // Reordering APIs
+ static int syncord_should_reorder(struct mcs_spinlock *node, struct mcs_spinlock *next, int policy_id)
+ {
+-	return 0;
++	struct bpf_prog *prog;
++	prog = bpf_prog_should_reorder[policy_id];
++
++	struct lock_policy_args args;
++	args.numa_node= &(((struct cna_node *)node)->numa_node);
++	args.next_numa_node = &(((struct cna_node *)next)->numa_node);
++
++	// printk("custom: %d == %d\n", args.numa_node, args.next_numa_node);
++
++	int ret = BPF_PROG_RUN(prog, &args);
++	// printk("result = %d\n", ret);
++
++	return ret;
+ }
+ 
+ static int default_cmp_func(struct mcs_spinlock *node, struct mcs_spinlock *next){
