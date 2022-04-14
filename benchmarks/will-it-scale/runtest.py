@@ -6,8 +6,7 @@ import sys
 import os
 import re
 
-data_points = [1,2,4,8]
-# data_points = [1,2,4,8,16,28,56,84,112,140,168,196,224]
+data_points = [1,2,4,8,16,28,56,84,112,140,168,196,224]
 
 class linux_stat():
     def __init__(self, procstat='/proc/stat'):
