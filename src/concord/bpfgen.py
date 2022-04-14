@@ -218,6 +218,8 @@ class EBPF_GEN(Instance):
                 if section.startswith("maps"):
                     bpf_user = os.path.join(self.path_src, self.name+"_user.c")
                     inplace_replace(bpf_user, "#define MAP 0", "#define MAP 1")
+                elif section.startswith("license"):
+                    continue
                 else:
                     assert section.startswith("lock_")
             except AssertionError as e:
