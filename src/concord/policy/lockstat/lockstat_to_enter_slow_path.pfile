@@ -1,4 +1,4 @@
-SEC("lock_qspinlock")
+SEC("lock_qspinlock_contended")
 int custom_to_enter_slow_path(struct __lock_policy_args *args)
 {
 	unsigned long key = args->lock_ptr;

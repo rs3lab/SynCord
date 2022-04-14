@@ -1,4 +1,4 @@
-SEC("lock_rwsem_global")
+SEC("lock_rwsem_bypass_release")
 int custom_lock_bypass_release(struct __lock_policy_args *args)
 {
 	/* bpf_printk("[release] %lu | %lu | %lu \n", args->InhibitUntil, args->RBias, args->per_cpu_data); */

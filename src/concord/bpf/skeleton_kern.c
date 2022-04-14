@@ -3,3 +3,5 @@
 #include "concord.h"
 
 ${API_CONTENTS}
+
+char _license[] SEC("license") = "GPL";
