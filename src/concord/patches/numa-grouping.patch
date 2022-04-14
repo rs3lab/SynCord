@@ -56,7 +56,7 @@ index a70f7209c..6f47a90b7 100644
 +	extern int num_policy;
 +	extern void *bpf_prog_should_reorder[MAX_POLICY];
 +
-+	if(num<policy < 4)
++	if(num_policy < 4)
 +		num_policy++;
 +	else
 +		return -1;
@@ -76,7 +76,7 @@ index a70f7209c..6f47a90b7 100644
 +
 +	bpf_prog_should_reorder[num_policy] = NULL;
 +	num_policy--;
-+	klp_hsadow_free_all(0, NULL);
++	klp_shadow_free_all(0, NULL);
 +}
 +KPATCH_PRE_PATCH_CALLBACK(pre_patch_callback);
 +KPATCH_POST_UNPATCH_CALLBACK(post_unpatch_callback);
