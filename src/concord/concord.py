@@ -35,15 +35,15 @@ class LockGen(object):
         self.patched_lock_module = None
         self.lock_ebpf = None
 
-    def get_name(self, path: str) -> str:
-        # Get name of the file
-        try:
-            filename = os.path.basename(path)
-            return os.path.splitext(filename)[0]
-        except Exception as e:
-            logging.error("Name not found")
-            print(e)
-            sys.exit()
+    # def get_name(self, path: str) -> str:
+    #     # Get name of the file
+    #     try:
+    #         filename = os.path.basename(path)
+    #         return os.path.splitext(filename)[0]
+    #     except Exception as e:
+    #         logging.error("Name not found")
+    #         print(e)
+    #         sys.exit()
 
     def _setup(self, debug: Optional[str] = None) -> None:
         # setup logging
@@ -52,28 +52,38 @@ class LockGen(object):
     def _check_and_gen_ebpf(self) -> None:
 
         policy_files = find_all_files(self.policy_dir, re.compile('(.*)\.pfile'))
+        map_file = find_all_files(self.policy_dir, re.compile('(.*)\.map'))
         aux_data = find_all_files(self.policy_dir, re.compile('(.*)\.h'))
 
-        if aux_data:
+        if len(aux_data) == 1:
             self.aux_data = aux_data[0]
+        elif len(aux_data) > 1:
+            logging.error("policy directory can contain one header file")
+            sys.exit()
 
-        # TODO: Merge policy file into one
-        for policy_file in policy_files:
-            policy_name = self.get_name(policy_file)
-            ebpf_gen = bpfgen.EBPF_GEN(policy_name,\
-                    self.linux_src,\
-                    policy_file, \
-                    self.aux_data)
+        if len(map_file) == 1:
+            self.map_file = map_file[0]
+        elif len(aux_data) > 1:
+            logging.error("SynCord currently support single hashmap usage")
+            sys.exit()
+        else:
+            self.map_file = ""
 
-            # Create `./output/eBPFGen/<name>/src` and prepare src codes to compile
-            # eBPF program
-            ebpf_gen.ready(True)
+        ebpf_gen = bpfgen.EBPF_GEN(self.policy_dir, \
+                self.linux_src, \
+                policy_files,
+                self.map_file,
+                self.aux_data)
 
-            # Get user's policy and check whether it matches with exposed API
-            ebpf_gen.check()
+        # Create `./output/eBPFGen/<name>/src` and prepare src codes to compile
+        # eBPF program
+        ebpf_gen.ready(True)
 
-            # Compile eBPF
-            ebpf_gen.build()
+        # Get user's policy and check whether it matches with exposed API
+        ebpf_gen.check()
+
+        # Compile eBPF
+        ebpf_gen.build()
 
         return ebpf_gen
 
@@ -156,9 +166,11 @@ def main(argv: List[str]) -> int:
         help='a directory contains policy and auxiliary data'
     )
 
-    # user's patch file (optional)
+    # user's patch file
+    # On-going implementation to automate the patch file creation
+    # After have it, we can delete this argument or make it optional.
     parser.add_argument(
-        '--livepatch',
+        '--livepatch', required=True,
         type=os.path.abspath,
         help='livepatch file'
     )

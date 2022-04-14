@@ -16,10 +16,10 @@ class Instance(ABC):
 
     def __init__(self, prog: str, name: str) -> None:
         # basics
-        self.name = name
+        self.name = os.path.basename(name)
 
         # paths
-        path_base = os.path.join(CONFIG.PATH_OUTS, prog, self.name)
+        path_base = os.path.join(CONFIG.PATH_OUTS, self.name, prog)
         self.path_src = path_base
         #  self.path_src = os.path.join(path_base, 'src')
         #  self.path_obj = os.path.join(path_base, 'obj')

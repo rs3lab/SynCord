@@ -1,0 +1,28 @@
+struct time_stat{
+	unsigned long min;
+	unsigned long max;
+	unsigned long total;
+};
+
+struct data_t{
+	/* User-defined additional data */
+	unsigned long prev_cpu;
+
+	/* lock_to_enter_slow_path */
+	unsigned long contentions;
+	unsigned long con_bounces;
+	struct time_stat waittime;
+
+	/* lock_acquired */
+	unsigned long acquisitions;
+	unsigned long acq_bounces;
+	struct time_stat holdtime;
+
+};
+
+struct bpf_map_def SEC("maps") hash_map = {
+	.type = BPF_MAP_TYPE_HASH,
+	.key_size = sizeof(unsigned long),
+	.value_size = sizeof(struct data_t),
+	.max_entries = 10000,
+};

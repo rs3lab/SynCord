@@ -66,17 +66,19 @@ class CONCORD_API:
 
 class EBPF_GEN(Instance):
 
-    def __init__(self, name: str, linux_src: str, policy_file: str, aux_data: str) -> None:
+    def __init__(self, name: str, linux_src: str, policy_files: str, map_file: str, aux_data: str) -> None:
         super(EBPF_GEN, self).__init__('eBPFGen', name)
         self.linux_src = linux_src
-        self.policy_file = policy_file
+        self.policy_files = policy_files
+        self.map_file = map_file
         self.aux_data= aux_data
         self.list_API = {}
 
     def get_section(self) -> str:
         # Get section specified in pfile
         try:
-            with open(self.policy_file) as f:
+            bpf_kern = os.path.join(self.path_src, self.name+"_kern.c")
+            with open(bpf_kern) as f:
                 name = re.findall('SEC\(\"(.*?)\"\)', f.read())
                 return name
         except Exception as e:
@@ -93,7 +95,7 @@ class EBPF_GEN(Instance):
         cmd = ["cp", self.aux_data, os.path.join(self.path_src, "include/concord.h")]
         execute(cmd)
 
-        # ===== Patch file =====
+        # ===== Create policy program =====
         # Makefile
         makefile = os.path.join(self.path_src, 'Makefile')
         inplace_replace(makefile, "${POLICY_NAME}", self.name)
@@ -101,18 +103,38 @@ class EBPF_GEN(Instance):
 
         # Policy file name (kern)
         bpf_kern_init = os.path.join(self.path_src, CONFIG.BPF_SKELETON_KERN)
+        contents = []
+        if len(self.map_file) > 0 :
+            with open(self.map_file) as f:
+                contents.append(f.read())
 
-        # Include user's policy in the eBPF src
-        with open(self.policy_file) as f:
-            contents = f.read()
-            inplace_replace(bpf_kern_init, "${API_CONTENTS}", contents)
+        for policy_file in self.policy_files:
+            with open(policy_file) as f:
+                contents.append(f.read())
+
+        inplace_replace(bpf_kern_init, "${API_CONTENTS}", '\n'.join(contents))
+
+#         # Include user's policy in the eBPF src
+#         with open(self.policy_file) as f:
+#             contents = f.read()
+#             inplace_replace(bpf_kern_init, "${API_CONTENTS}", contents)
 
         bpf_kern = os.path.join(self.path_src, self.name+"_kern.c")
         os.rename(bpf_kern_init, bpf_kern)
 
         # Policy file name (user)
         bpf_user_init = os.path.join(self.path_src, CONFIG.BPF_SKELETON_USER)
-        inplace_replace(bpf_user_init, "${POLICY_NAME}", self.name)
+        inplace_replace(bpf_user_init, "${NUM_POLICY}", str(len(self.policy_files)))
+
+        policy_list = []
+        for policy_file in self.policy_files:
+            basename = os.path.basename(policy_file)
+            policy_name = os.path.splitext(basename)[0]
+            policy_list.append('\"' + CONFIG.POLICY_PIN + policy_name + '\"')
+
+        policy_list = ", ".join(policy_list)
+
+        inplace_replace(bpf_user_init, "${POLICY_LIST}", policy_list)
 
         bpf_user = os.path.join(self.path_src, self.name+"_user.c")
         os.rename(bpf_user_init, bpf_user)
@@ -122,9 +144,6 @@ class EBPF_GEN(Instance):
         ncpu = os.cpu_count()
         logging.info('Number of CPUs: ' + str(ncpu))
         inplace_replace(bpf_header_init, "${NCPU}", str(ncpu))
-
-
-
 
     def _setup_impl(self, override: bool) -> None:
         # Create obj directory
