@@ -1,35 +1,32 @@
 #!/bin/zsh
 
 duration=30
-workload=(scl scl-numa scl-numa-backoff)
-# workload=(scl_profiling scl-numa_profiling scl-numa-backoff_profiling)
-# workload=(shfllock_profiling)
-# workload=(shfllock)
-cores=(2 4 8 16 28 56 84 112 140 168 196 224)
-# cache=(16 32 64 128 256 512 1024)
-cache=(64 128 256 512 1024)
+# cores=(2 4 8 16 28 56 84 112 140 168 196 224)
+cores=(2 4)
 
-for c in ${cache[@]}
+if [ -n $1 ]
+then
+	policydir = $1
+else
+	policydir = default
+fi
+
+mkdir -p results
+mkdir ./results/$policydir
+
+for var in ${cores[@]}
 do
-	mkdir ./results/SCL-${c}C
+	# install policy
+	sudo $policydir/eBPFGen/scl_acqed_lock
+	sudo $policydir/eBPFGen/scl_cmp
+	sudo $policydir/eBPFGen/scl_cont
+	sudo $policydir/eBPFGen/scl_release_lock
 
-	make clean
-	make CACHELINE=${c} 
+	sudo insmod $policydir/LivePatchGen/livepatch-concord.ko
+	sleep 5
 
-	for policy in ${workload[@]}
-	do	
-		mkdir ./results/SCL-${c}C/$policy
+	python3 run_bench.py 1000000 $duration $(($var/2)) $(($var/2)) | tee ./results/$policydir/result.$var
 
-		for var in ${cores[@]}
-		do
-			sudo ./install.sh $policy
-			sleep 5
-			./scl_usage ${duration} $(($var/2)) $(($var/2)) | tee ./results/SCL-${c}C/$policy/result.$var
-			# sudo ~/policy/get_profiling_result/get_bpflockstat | tee ./results/$policy/profile.$var
-
-			sudo ./clean.sh
-			sleep 10
-			sudo rmmod livepatch_concord
-		done	
-	done
-done
+	sudo ~/SynCord/scripts/uninstall_policy.sh
+	sleep 10
+done	
