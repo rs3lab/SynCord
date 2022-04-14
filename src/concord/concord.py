@@ -35,16 +35,6 @@ class LockGen(object):
         self.patched_lock_module = None
         self.lock_ebpf = None
 
-    # def get_name(self, path: str) -> str:
-    #     # Get name of the file
-    #     try:
-    #         filename = os.path.basename(path)
-    #         return os.path.splitext(filename)[0]
-    #     except Exception as e:
-    #         logging.error("Name not found")
-    #         print(e)
-    #         sys.exit()
-
     def _setup(self, debug: Optional[str] = None) -> None:
         # setup logging
        prepdn(self.path_log, override = True)
@@ -92,7 +82,8 @@ class LockGen(object):
         return self.lock_ebpf
 
     def _patch_kernel(self) -> None:
-        lock_name = self.get_name(self.livepatch)
+        basename = os.path.basename(self.livepatch)
+        lock_name = os.path.splitext(basename)[0]
         livepatch_gen = livepatch.PATCH_GEN(lock_name,\
                 self.linux_src,\
                 self.lock_ebpf.name, \
