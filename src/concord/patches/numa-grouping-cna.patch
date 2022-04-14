@@ -119,8 +119,8 @@ index d48e6a1be..80f03292e 100644
 +	prog = bpf_prog_should_reorder[policy_id];
 +
 +	struct lock_policy_args args;
-+	args.numa_node= &(((struct cna_node *)node)->numa_node);
-+	args.next_numa_node = &(((struct cna_node *)next)->numa_node);
++	args.numa_node= ((struct cna_node *)node)->numa_node;
++	args.next_numa_node = ((struct cna_node *)next)->numa_node;
 +
 +	// printk("custom: %d == %d\n", args.numa_node, args.next_numa_node);
 +

@@ -14,12 +14,12 @@ struct __lock_policy_args {
 	unsigned long per_cpu_data;
 
 	/* User-defined additional data */
-	unsigned long numa_node;
-	unsigned long next_numa_node;
+	unsigned long arg1;
+	unsigned long arg2;
 	unsigned long arg3;
 	unsigned long arg4;
-	unsigned long arg5;
-	unsigned long arg6;
+	unsigned long numa_node;
+	unsigned long next_numa_node;
 	unsigned long arg7;
 	unsigned long arg8;
 };
@@ -34,14 +34,14 @@ struct lock_policy_args {
 	struct __aligned_u64_field *per_cpu_data;
 
 	/* User-defined additional data */
-	unsigned long *numa_node;
-	unsigned long *next_numa_node;
+	unsigned long *arg1;
+	unsigned long *arg2;
 	unsigned long *arg3;
 	unsigned long *arg4;
-	unsigned long *arg5;
-	unsigned long *arg6;
-	unsigned long *arg7;
-	unsigned long *arg8;
+	unsigned long numa_node;
+	unsigned long next_numa_node;
+	unsigned long arg7;
+	unsigned long arg8;
 
 	unsigned long tmp_reg;
 };
