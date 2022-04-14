@@ -87,42 +87,25 @@ if arch == 'ppc64':
     if 'off' not in smt_status:
         print('WARNING: SMT enabled, suggest disabling', file=sys.stderr)
 
-print('tasks,processes,processes_idle,threads,threads_idle,linear')
-print('0,0,100,0,100,0')
+print('# core,total,fast,slow')
 
 for i in data_points:
-    c = './build/%s_processes -t %d -s %d -n %d' % (cmd, i, duration, cores_per_socket)
-    before = linux_stat()
-    pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
-    processes_avg = -1
-    for line in pipe.readlines():
-        if 'testcase:' in line:
-            (testcase, val) = line.split(':')
-            title = open(cmd + '.title', 'w')
-            title.write(val)
-            title.close()
-
-        if 'average:' in line:
-            (name, val) = line.split(':')
-            processes_avg = int(val)
-    pipe.close()
-    after = linux_stat()
-    processes_idle = after.idle_fraction(before) * 100
-
     c = './build/%s_threads -t %d -s %d -n %d' % (cmd, i, duration, cores_per_socket)
     before = linux_stat()
     pipe = subprocess.Popen(setarch + ' ' + c, shell=True, stdout=subprocess.PIPE, text=True).stdout
-    threads_avg = -1
+    threads_tot = -1
+    threads_fast = -1
+    threads_slow = -1
+
     for line in pipe.readlines():
         if 'average:' in line:
-            (name, val) = line.split(':')
-            threads_avg = int(val)
+            (name, total, fast, slow) = line.split(':')
+            threads_tot = int(total)
+            threads_fast = int(fast)
+            threads_slow = int(slow)
+
     pipe.close()
     after = linux_stat()
     threads_idle = after.idle_fraction(before) * 100
 
-    if i == 1:
-        linear = max(processes_avg, threads_avg)
-
-    print('%d,%d,%0.2f,%d,%0.2f,%d' % (i, processes_avg, processes_idle, threads_avg, threads_idle,
-        linear * i))
+    print('%d,%d,%d,%d' % (i, threads_tot, threads_fast, threads_slow))

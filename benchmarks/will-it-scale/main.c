@@ -27,6 +27,11 @@ extern void __attribute__((weak)) testcase_prepare(unsigned long nr_tasks) { }
 extern void __attribute__((weak)) testcase_cleanup(void) { }
 extern void *testcase(unsigned long long *iterations, unsigned long nr);
 
+enum {
+	fast_cpu,
+	slow_cpu
+};
+
 static char *initialise_shared_area(unsigned long size)
 {
 	char template[] = "/tmp/shared_area_XXXXXX";
@@ -81,6 +86,7 @@ struct args
 	int my_cpu;
 	int total_cpu;
 	int core_per_socket;
+	int role;
 };
 
 static void *testcase_trampoline(void *p)
@@ -113,17 +119,25 @@ static int setaffinity(int c)
 	return sched_setaffinity(0, sizeof(cpuset), &cpuset);
 }
 
+static int cpu_role(int cpu, int core_per_socket) {
+	int ret = (cpu % core_per_socket < core_per_socket/2)?
+		fast_cpu : slow_cpu;
+	return ret;
+}
+
 static void *pre_trampoline(void *p)
 {
 	struct args *args = p;
 
 	if (args->total_cpu >= args->core_per_socket) {
 		setaffinity(args->my_cpu);
+		args->role = cpu_role(args->my_cpu, args->core_per_socket);
 	}
 	else {
 		int cpu = (args->my_cpu == 0 || args->my_cpu < args->total_cpu / 2)?
 					args->my_cpu : (args->my_cpu - args->total_cpu / 2) + args->core_per_socket /2;
 		setaffinity(cpu);
+		args->role = cpu_role(cpu, args->core_per_socket);
 	}
 	return testcase_trampoline(args);
 }
@@ -239,7 +253,7 @@ int main(int argc, char *argv[])
 	char *m;
 	static unsigned long long *results[MAX_TASKS];
 	unsigned long long prev[MAX_TASKS] = {0, };
-	unsigned long long total = 0;
+	unsigned long long total = 0, tot_fast_ops = 0, tot_slow_ops = 0;
 	int fd[2];
 	struct args *args;
 
@@ -315,7 +329,7 @@ int main(int argc, char *argv[])
 	printf("warmup\n");
 
 	while (1) {
-		unsigned long long sum = 0, min = -1ULL, max = 0;
+		unsigned long long sum = 0, min = -1ULL, max = 0, fast_ops = 0, slow_ops = 0;
 
 		sleep(1);
 
@@ -330,20 +344,31 @@ int main(int argc, char *argv[])
 				max = diff;
 
 			sum += diff;
+
+			if(args[i].role == fast_cpu)
+				fast_ops += diff;
+			else
+				slow_ops += diff;
+
 			prev[i] = val;
 		}
 
-		printf("min:%llu max:%llu total:%llu\n", min, max, sum);
+		printf("min:%llu max:%llu total:%llu fast:%llu slow:%llu\n", min, max,
+						        sum, fast_ops, slow_ops);
 
 		if (iterations == WARMUP_ITERATIONS)
 			printf("measurement\n");
 
 		if (iterations++ > WARMUP_ITERATIONS)
+		{
 			total += sum;
+			tot_fast_ops += fast_ops;
+			tot_slow_ops += slow_ops;
+		}
 
 		if (opt_iterations &&
 		    (iterations > (opt_iterations + WARMUP_ITERATIONS))) {
-			printf("average:%llu\n", total / opt_iterations);
+			printf("average:%llu:%llu:%llu\n", total / opt_iterations, tot_fast_ops/opt_iterations, tot_slow_ops/opt_iterations);
 			break;
 		}
 	}
