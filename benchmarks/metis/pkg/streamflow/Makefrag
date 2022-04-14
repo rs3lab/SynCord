@@ -43,4 +43,4 @@ $(O)/lib/libstreamflow.a: $(STREAMFLOW_OBJ)
 $(O)/lib/libstreamflow.so:  $(STREAMFLOW_OBJ)
 	$(Q)mkdir -p $(@D)
 	@echo "SO	$@"
-	$(Q)$(CC) $(SF_CFLAGS) $^ -o $@ -lstdc++ -shared 
+	$(Q)$(CXX) $(SF_CFLAGS) $^ -o $@ -lstdc++ -shared

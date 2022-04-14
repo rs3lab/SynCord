@@ -1,4 +1,4 @@
-# How do we figure out the meta information for an object? 
+# How do we figure out the meta information for an object?
 # Options:
 #	- HEADERS
 #	- BIBOP
@@ -11,7 +11,7 @@ META_METHOD	= RADIX_TREE
 # Options:
 # 	- ppc64 (IBM PowerPC, 64-bit)
 #	- x86 (Intel x86, 32-bit)
-#	- ia64 (Intel Itanium, 64-bit)	
+#	- ia64 (Intel Itanium, 64-bit)
 #	- x86_64 (Intel/AMD 64-bit)
 ASM		= x86_64
 #ASM		= x86
@@ -45,7 +45,7 @@ GCC_OPT		= -O3 #-pipe -finline-functions -fomit-frame-pointer
 ICC_CFLAGS	= -wd279 -wd981 -wd1418 -wd1469 -wd383 -wd869 -wd522 -wd810 -wd1684 -wd1338 -wd1684 -D_GNU_SOURCE
 ICC_OPT		= -O3 -g
 
-XLC_CFLAGS	= -q64 -qabi_version=2 -qasm=gcc 
+XLC_CFLAGS	= -q64 -qabi_version=2 -qasm=gcc
 XLC_OPT		= -O4
 
 ifeq ($(CC), gcc)
@@ -66,13 +66,13 @@ endif
 
 # Rules.
 
-all:	libstreamflow.so 
+all:	libstreamflow.so
 
 clean:
-	rm -f *.o *.so 
+	rm -f *.o *.so
 
 streamflow.o:		streamflow.h streamflow.c
-			$(CC) $(CFLAGS) $(OPT) -Iinclude-$(ASM) -c streamflow.c 
+			$(CXX) $(CFLAGS) $(OPT) -Iinclude-$(ASM) -c streamflow.c
 ummap.o:		ummap.h ummap.c
 			$(CC) $(CFLAGS) $(OPT) -Iinclude-$(ASM) -c ummap.c
 
@@ -83,6 +83,6 @@ override.o:		override.c streamflow.h
 			$(CC) $(CFLAGS) $(OPT) -Iinclude-$(ASM) -c override.c
 
 libstreamflow.so:	malloc_new.o streamflow.o override.o ummap.o
-			$(CXX) $(CFLAGS) $(OPT) override.o streamflow.o malloc_new.o ummap.o -o libstreamflow.so -lstdc++ -shared 
+			$(CXX) $(CFLAGS) $(OPT) override.o streamflow.o malloc_new.o ummap.o -o libstreamflow.so -lstdc++ -shared
 
 
