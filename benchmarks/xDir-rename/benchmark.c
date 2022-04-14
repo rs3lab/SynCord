@@ -1,4 +1,4 @@
-#define _GNU_SOURCE  
+#define _GNU_SOURCE
 #include <assert.h>
 #include <dirent.h>
 #include <errno.h>
@@ -13,8 +13,6 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
-
-#define SYS_rename2 437
 
 typedef struct {
 	volatile int *stop;
@@ -54,8 +52,9 @@ uint64_t rename_prog(char *src, char *dst){
 	close(fd);
 
 	/* Rename the file */
-	// rc = rename(source, destination);
-	rc = syscall(SYS_rename2, src, dst, &hold_time);
+	hold_time = __builtin_ia32_rdtsc();
+	rc = rename(src, dst);
+	hold_time = __builtin_ia32_rdtsc() - hold_time;
 	if (rc < 0) {
 		fprintf(stderr, "bully rename source=%s, dest=%s: %s\n", src,
 				dst, strerror(errno));
@@ -134,7 +133,7 @@ void *victim(void *arg) {
 int main(int argc, char **argv) {
 
 	if (argc != 7) {
-		fprintf(stderr, "%s [src] [dst_dirty] [dst] [duration] [# bully] [# victim]\n",
+		fprintf(stderr, "Usage: %s src dst_dirty dst duration num_bully num_victim\n",
 				argv[0]);
 		return 1;
 	}
