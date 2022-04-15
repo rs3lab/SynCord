@@ -14,6 +14,8 @@
 #include <time.h>
 #include <unistd.h>
 
+#define SYS_rename2 436
+
 typedef struct {
 	volatile int *stop;
 	const char *src;
@@ -52,9 +54,7 @@ uint64_t rename_prog(char *src, char *dst){
 	close(fd);
 
 	/* Rename the file */
-	hold_time = __builtin_ia32_rdtsc();
-	rc = rename(src, dst);
-	hold_time = __builtin_ia32_rdtsc() - hold_time;
+	rc = syscall(SYS_rename2, src, dst, &hold_time);
 	if (rc < 0) {
 		fprintf(stderr, "bully rename source=%s, dest=%s: %s\n", src,
 				dst, strerror(errno));

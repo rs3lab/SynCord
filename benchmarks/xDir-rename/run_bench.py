@@ -7,7 +7,7 @@ import string
 import shutil
 import argparse
 
-expr_dir = "/mnt/expr"
+expr_dir = "./temp"
 disk="/dev/sda3"
 
 def get_rand_str(len) -> str:
