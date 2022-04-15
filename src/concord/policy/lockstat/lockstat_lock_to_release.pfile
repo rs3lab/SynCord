@@ -14,7 +14,7 @@ int custom_lock_to_release(struct __lock_policy_args *args)
 	// holdtime stat
 	unsigned long holdtime = bpf_ktime_get_ns() - args->hold_start;
 	data_ptr->holdtime.total += holdtime;
-	data_ptr->holdtime.min = data_ptr->holdtime.min > holdtime ? holdtime : data_ptr->holdtime.min;
+	data_ptr->holdtime.min = data_ptr->holdtime.min == 0 || data_ptr->holdtime.min > holdtime ? holdtime : data_ptr->holdtime.min;
 	data_ptr->holdtime.max = data_ptr->holdtime.max < holdtime ? holdtime : data_ptr->holdtime.max;
 
 	return 0;

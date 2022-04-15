@@ -31,7 +31,7 @@ int custom_lock_acquired(struct __lock_policy_args *args)
 	if (args->per_cpu_data != 0){
 		unsigned long waittime = bpf_ktime_get_ns() - args->per_cpu_data;
 		data_ptr->waittime.total += waittime;
-		data_ptr->waittime.min = data_ptr->waittime.min > waittime ? waittime : data_ptr->waittime.min;
+		data_ptr->waittime.min = data_ptr->waittime.min == 0 || data_ptr->waittime.min > waittime ? waittime : data_ptr->waittime.min;
 		data_ptr->waittime.max = data_ptr->waittime.max < waittime ? waittime : data_ptr->waittime.max;
 	}
 
