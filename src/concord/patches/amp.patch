@@ -16,10 +16,10 @@ index e88cf0554..6c35d60e4 100644
  EXPORT_SYMBOL(d_move);
  
 diff --git a/kernel/bpf/inode.c b/kernel/bpf/inode.c
-index a70f7209c..f18cdbcb5 100644
+index a70f7209c..95a964262 100644
 --- a/kernel/bpf/inode.c
 +++ b/kernel/bpf/inode.c
-@@ -701,3 +701,85 @@ static int __init bpf_init(void)
+@@ -701,3 +701,79 @@ static int __init bpf_init(void)
  	return ret;
  }
  fs_initcall(bpf_init);
@@ -76,12 +76,6 @@ index a70f7209c..f18cdbcb5 100644
 +
 +	bpf_prog_lock_to_enter_slowpath[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/amp_cont_lock");
 +	if(IS_ERR(bpf_prog_lock_to_enter_slowpath[num_policy])){
-+		printk("[syncord] bpf_policy failed\n");
-+		return -1;
-+	}
-+
-+	bpf_prog_lock_acquired[num_policy] = get_pinned_bpf_obj("/sys/fs/bpf/amp_acqed_lock");
-+	if(IS_ERR(bpf_prog_lock_acquired[num_policy])){
 +		printk("[syncord] bpf_policy failed\n");
 +		return -1;
 +	}
