@@ -100,7 +100,7 @@ index a70f7209c..95a964262 100644
 +KPATCH_PRE_PATCH_CALLBACK(pre_patch_callback);
 +KPATCH_POST_UNPATCH_CALLBACK(post_unpatch_callback);
 diff --git a/kernel/locking/qspinlock.c b/kernel/locking/qspinlock.c
-index cfdd020be..e6a115aea 100644
+index cfdd020be..10b30e33d 100644
 --- a/kernel/locking/qspinlock.c
 +++ b/kernel/locking/qspinlock.c
 @@ -29,6 +29,9 @@
@@ -127,13 +127,4 @@ index cfdd020be..e6a115aea 100644
 +
  	return;
  }
- 
-@@ -1018,7 +1029,7 @@ void queued_spin_lock(struct qspinlock *lock)
- 	if (likely(atomic_try_cmpxchg_acquire(&lock->val, &val, _Q_LOCKED_VAL)))
- 		return;
- 
--	queued_spin_lock_slowpath(lock, val, 0, 0);
-+	queued_spin_lock_slowpath(lock, val, 1, num_policy);
- }
- EXPORT_SYMBOL(queued_spin_lock);
  
