@@ -1,0 +1,6 @@
+SEC("lock_qspinlock_global")
+bool custom_cmp_func(struct __lock_policy_args *args)
+{
+	// only compare numa id
+	return (args->numa_node == args->next_num_node);
+}

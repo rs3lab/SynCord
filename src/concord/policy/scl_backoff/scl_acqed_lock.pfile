@@ -1,0 +1,11 @@
+SEC("lock_qspinlock_global")
+int custom_lock_acquired(struct __lock_policy_args *args)
+{
+	// start measure critical section
+	unsigned long now = bpf_ktime_get_ns();
+
+	args->start_ts = now;
+
+	/* bpf_printk("ACQD: start at %ld\n", now); */
+	return 0;
+}
