@@ -1,6 +1,7 @@
 #!/bin/bash
 
 import os
+import time
 import sys
 import random
 import string
@@ -9,6 +10,7 @@ import argparse
 
 expr_dir = "./temp"
 disk="/dev/sda3"
+uninstall_path = "~/SynCord/scripts/uninstall_policy.sh"
 
 def get_rand_str(len) -> str:
     letters = string.ascii_letters
@@ -50,7 +52,7 @@ def mkdir(dirname, num_files):
 
             elif file_count > num_files:
                 for i in range(file_count - num_files):
-                    os.remove(list[i])
+                    os.remove(dirname+"/"+list[i])
                 print("Directory ", dirname , "created")
 
 def prepare_dir(num_files):
@@ -86,10 +88,21 @@ if __name__ == '__main__':
     parser.add_argument('bully', help = 'the number of bully threads', type=int)
     parser.add_argument('victim', help = 'the number of victim threads', type=int)
 
+    parser.add_argument('--scl', help = 'directory path to output/scl directory', type=os.path.abspath)
+
     args = parser.parse_args()
 
     prepare_dir(args.n)
 
     turn_off_dir_index()
 
+    if args.scl is not None:
+       os.system("sudo %s/eBPFGen/scl" % args.scl)
+       os.system("sudo insmod %s/LivePatchGen/livepatch-concord.ko" % args.scl)
+       time.sleep(10)
+
     run_bench(args.n, args.duration, args.bully, args.victim)
+
+    if args.scl is not None:
+        os.system("sudo %s" % uninstall_path)
+        time.sleep(10)
