@@ -1,0 +1,14 @@
+#define CORE_PER_SOCKET 28
+#define AMP_PATIENCE_TICK 22000000
+
+SEC("lock_qspinlock_contended")
+int custom_lock_contended(struct __lock_policy_args *args)
+{
+	unsigned long cpu = bpf_get_smp_processor_id();
+
+	if (cpu % CORE_PER_SOCKET >= CORE_PER_SOCKET / 2) {
+		bpf_back_off(args->lock_ptr, AMP_PATIENCE_TICK);
+	}
+
+	return 0;
+}
