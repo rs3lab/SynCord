@@ -1,4 +1,4 @@
-SEC("lock_qspinlock_global")
+SEC("lock_qspinlock_contended")
 int custom_lock_contended(struct __lock_policy_args *args)
 {
 	unsigned long num_threads = args->arg7;

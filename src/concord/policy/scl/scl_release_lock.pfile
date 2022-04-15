@@ -1,4 +1,4 @@
-SEC("lock_qspinlock_global")
+SEC("lock_qspinlock_release")
 bool custom_lock_release(struct __lock_policy_args *args)
 {
 	// Get the length of critical section
@@ -7,8 +7,6 @@ bool custom_lock_release(struct __lock_policy_args *args)
 
 	args->lock_hold += cs_len;		//per-thread
 	args->tot_lock_hold += cs_len;	//per-lock
-
-	/* bpf_printk("RLSD: end   at %ld( %ld )\n", now, cs_len); */
 
 	return 0;
 }

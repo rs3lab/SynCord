@@ -52,7 +52,13 @@ struct lock_policy_args {
  */
 struct per_lock_data {
 	/* User-defined additional data */
-	struct __aligned_u64_field per_cpu_data[NR_CPUS];
+	unsigned long tot_lock_hold;
+	unsigned long num_threads;
+};
+
+struct per_thread_data {
+	unsigned long start_ts;
+	unsigned long lock_hold;
 };
 
 /*
@@ -61,6 +67,8 @@ struct per_lock_data {
  */
 struct per_node_data {
 	/* User-defined additional data */
+	unsigned long sock_id;
+	unsigned long lock_hold_capture;
 };
 
 #endif /* __LINUX_LOCK_POLICY_H__ */
