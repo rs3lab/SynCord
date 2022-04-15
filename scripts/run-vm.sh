@@ -1,19 +1,27 @@
 #!/bin/bash
 
-IMAGE=/home/spark/images/ubuntu-20.04.img
-KERNEL_SRC=/home/spark/etc/syncord/SynCord-linux
+IMAGE=/home/sujin/artifact/images/ubuntu-20.04.img
+KERNEL_SRC=/home/sujin/artifact/SynCord-linux
 
-CORES=4
-SOCKETS=1
+CORES=28
+SOCKETS=8
 
 PORT_TCP=4444
 PORT_QMP=5555
 
 qemu-system-x86_64 \
 	--enable-kvm \
-	-m 2G \
+	-m 128G \
 	-cpu host \
 	-smp cores=${CORES},threads=1,sockets=${SOCKETS} \
+	-numa node,nodeid=0,mem=16G,cpus=0-27 \
+	-numa node,nodeid=1,mem=16G,cpus=28-55 \
+	-numa node,nodeid=2,mem=16G,cpus=56-83 \
+	-numa node,nodeid=3,mem=16G,cpus=84-111 \
+	-numa node,nodeid=4,mem=16G,cpus=112-139 \
+	-numa node,nodeid=5,mem=16G,cpus=140-167 \
+	-numa node,nodeid=6,mem=16G,cpus=168-195 \
+	-numa node,nodeid=7,mem=16G,cpus=196-223 \
 	-drive file=${IMAGE},format=raw\
 	-nographic \
 	-overcommit mem-lock=off \
