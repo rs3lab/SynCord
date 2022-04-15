@@ -192,10 +192,10 @@ index cfdd020be..db598f614 100644
 +	struct lock_policy_args args;
 +	unsigned long zero = 0;
 +	if(!ptd) {
-+		args.lock_hold = &(ptd->lock_hold);
++		args.lock_hold = &zero;
 +	}
 +	else{
-+		args.lock_hold = &zero;
++		args.lock_hold = &(ptd->lock_hold);
 +	}
 +
 +	args.start_ts = &(ptd->start_ts);
@@ -223,10 +223,10 @@ index cfdd020be..db598f614 100644
 +	struct lock_policy_args args;
 +	unsigned long zero = 0;
 +	if(!ptd) {
-+		args.lock_hold = &(ptd->lock_hold);
++		args.lock_hold = &zero;
 +	}
 +	else{
-+		args.lock_hold = &zero;
++		args.lock_hold = &(ptd->lock_hold);
 +	}
 +
 +	args.lock_hold = &(ptd->lock_hold);
