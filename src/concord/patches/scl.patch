@@ -229,7 +229,7 @@ index cfdd020be..db598f614 100644
 +		args.lock_hold = &(ptd->lock_hold);
 +	}
 +
-+	args.lock_hold = &(ptd->lock_hold);
++
 +	args.lock_hold_capture= &(((struct per_node_data *)(node->bpf_args))->lock_hold_capture);
 +	args.tot_lock_hold = &(pld->tot_lock_hold);
 +
