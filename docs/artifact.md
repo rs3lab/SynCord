@@ -84,10 +84,11 @@ image](#how-to-create-the-disk-image) from scratch.
 
 ## 1. Download the disk image and SynCord repo
 ---
-Download the compresssed disk image [here](https://zenodo.org/TODO).
+Download the compresssed disk image
+[here](https://zenodo.org/record/6463964#.YloPYC8RpB0).
 Once you finish downloading the file, uncompress it using following command.
 
-	$ pv vm.img.xz | unxz -T <num_threads> > vm.img
+	$ pv vm.img.xz | unxz -T <num_threads> > ubuntu-20.04.img
 
 
 In addition, clone the SynCord repo.
