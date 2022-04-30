@@ -98,7 +98,7 @@ index cfdd020be..adc50a91e 100644
  // Reordering APIs
  static int syncord_should_reorder(struct qspinlock *lock, struct mcs_spinlock *node, struct mcs_spinlock *curr, int policy_id)
  {
--	return 0;
+-	return (node->nid == curr->nid);
 +	struct bpf_prog *prog;
 +	prog = bpf_prog_should_reorder[policy_id];
 +
