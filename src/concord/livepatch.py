@@ -86,14 +86,9 @@ class PATCH_GEN(Instance):
         logging.info('[Start] Build: compile livepatch module...')
 
         # Build Kernel
-        # TODO: remove this.
-        if os.path.exists(self.linux_src + "/vmlinux"):
-            logging.info('vmlinux already exist. Skip kernel compile')
-
-        else:
-            with cd(self.linux_src):
-                cmd = ["make", "-j", str(CONFIG.NCPU)]
-                execute(cmd)
+        with cd(self.linux_src):
+            cmd = ["make", "-j", str(CONFIG.NCPU)]
+            execute(cmd)
 
         with cd(self.path_src):
             kpatch = CONFIG.KPATCH_PATH + "/kpatch-build/kpatch-build"
