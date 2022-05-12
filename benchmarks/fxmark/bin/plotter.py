@@ -125,12 +125,14 @@ class Plotter(object):
             data_file = os.path.join(self.out_dir, _get_data_file(fs))
             with open(data_file, "w") as out:
                 print("# %s:%s:%s:%s:*" % (media, fs, bench, iomode), file=out)
+                print("# core, total, fast, slow", file=out)
                 for d_kv in data:
                     d_kv = d_kv[1]
                     if int(d_kv["ncpu"]) > self.ncore:
                         break
-                    print("%s %s" %
-                          (d_kv["ncpu"], float(d_kv["works/sec"])/self.UNIT),
+                    print("%s %s %s %s" %
+                          (d_kv["ncpu"], float(d_kv["works/sec"])/self.UNIT,
+                          float(d_kv["real.sec"])/self.UNIT, float(d_kv["user.sec"])/self.UNIT),
                           file=out)
         
         # gen gp file
