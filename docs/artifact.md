@@ -248,8 +248,8 @@ This step can confirm that your environment is suitable to show the NUMA effect.
 | CNA              | Fig 5      |                |                        |            |           |
 | ShflLock         | Fig 5      | Fig 7          | Fig 9                  |            |           |
 | stock-syncord    |            |                |                        | Fig 13<br>[Guide E](#guide-e)| Fig 12<br>[Guide F](#guide-f) |
-| CNA-syncord      | Fig 5<br>[Guide A](#guide-a-and-b) |           |           |            |           |
-| ShflLock-syncord | Fig 5<br>[Guide B](#guide-a-and-b) | Fig 7, Table 4<br>[Guide C](#guide-c) | Fig 9, Fig 10, Table 3<br>[Guide D](#guide-d) |  |  |
+| CNA-syncord      | Fig 5<br>[Guide A](#guide-a) |           |           |            |           |
+| ShflLock-syncord | Fig 5<br>[Guide B](#guide-b) | Fig 7, Table 4<br>[Guide C](#guide-c) | Fig 9, Fig 10, Table 3<br>[Guide D](#guide-d) |  |  |
 
 
 ## To switch between locks
@@ -342,9 +342,15 @@ To build and run FxMark,
 	(guest)$ make
 	(guest)$ bin/run-fxmark.py
 
+The `make` command automatically detect your environment and set the number of
+cores to test. If you want to change it manually, revise
+`test_hw_thr_cnts_coarse_grain` in `bin/cpupol.py`.
+
 To plot the graph,
 
 	(guest)$ bin/plotter.py --log logs/<log_dir>/fxmark.log --ty sc --out <output_dirname>
+	(guest)$ cat <output_dirname>/mem:tmpfs:MWRL:bufferedio.dat
+
 
 <br>
 ### Metis
@@ -505,21 +511,33 @@ guides.
 
 
 <br>
-### Guide A and B
+### Guide A
 ---
 
 This is a guide to reproduce Fig 5.
 
 In specific,
 
-- underlying lock: CNA-syncord or ShflLock-syncord
+- underlying lock: ShflLock-syncord
 - policy         : NUMA-aware
 - benchmark      : will-it-scale/lock1, FxMark/MWRL, LevelDB
 
+#### Check
+Please make sure you're using the correct kernel version and the SynCord-linux
+repo is on the correct branch.
+
+	(guest)$ uname -r
+	5.4.0-shfllock-syncord+
+
+	(guest)$ cd ~/SynCord-linux
+	(guest)$ git checkout -f shfllock-syncord
+	Switched to branch 'shfllock-syncord'
+	Your branch is up to date with 'origin/shfllock-syncord'.
+	(guest)$ cp ~/SynCord/scripts/config-syncord .config
+
+
 #### Build
 To create the NUMA-aware policy for ShflLock, run following commands.
-Please make sure the SynCord-linux repo in the guest machine is also pointing to
-the correct branch.
 
 	(guest)$ cd ~/SynCord/src/concord/
 	(guest)$ python3 concord.py -v --linux ~/SynCord-linux --policy
@@ -527,15 +545,40 @@ the correct branch.
 
 This will generate `output/numa-grouping` directory.
 
+
 #### Policy install
 To enable the policy:
 
+	(guest)$ cd ~/SynCord/src/concord/
 	(guest)$ sudo mount bpffs -t bpf /sys/fs/bpf
 	(guest)$ sudo ./output/numa-grouping/eBPFGen/numa-grouping
 	(guest)$ sudo insmod ./output/numa-grouping/LivePatchGen/livepatch-concord.ko
 
-For CNA, please replace `numa-grouping` into `numa-grouping-cna` for
-the above commands and use `cna-syncord` branch for the linux source directory.
+
+<br>
+### Guide B
+---
+
+This is a guide to reproduce Fig 5.
+
+In specific,
+
+- underlying lock: CNA-syncord
+- policy         : NUMA-aware
+- benchmark      : will-it-scale/lock1, FxMark/MWRL, LevelDB
+
+#### Check
+Please make sure you're using the correct kernel version and the SynCord-linux
+repo is on the correct branch.
+
+	(guest)$ uname -r
+	5.4.0-cna-syncord+
+
+	(guest)$ cd ~/SynCord-linux
+	(guest)$ git checkout -f cna-syncord
+	Switched to branch 'cna-syncord'
+	Your branch is up to date with 'origin/cna-syncord'.
+	(guest)$ cp ~/SynCord/scripts/config-cna .config
 
 > [Tips]
 > `cna-syncord` kernel needs
@@ -544,41 +587,106 @@ the above commands and use `cna-syncord` branch for the linux source directory.
 > Please make sure those flags are set in the `SynCord-linux/.config` file to test cna-syncord.
 
 
+#### Build
+To create the NUMA-aware policy for ShflLock, run following commands.
+Please make sure the SynCord-linux repo in the guest machine is also pointing to
+the correct branch.
+
+	(guest)$ cd ~/SynCord/src/concord/
+	(guest)$ python3 concord.py -v --linux ~/SynCord-linux --policy
+		policy/numa-grouping-cna --livepatch patches/numa-grouping-cna.patch
+
+This will generate `output/numa-grouping-cna` directory.
+
+
+#### Policy install
+To enable the policy:
+
+	(guest)$ cd ~/SynCord/src/concord/
+	(guest)$ sudo mount bpffs -t bpf /sys/fs/bpf
+	(guest)$ sudo ./output/numa-grouping-cna/eBPFGen/numa-grouping-cna
+	(guest)$ sudo insmod ./output/numa-grouping-cna/LivePatchGen/livepatch-concord.ko
+
+
 <br>
 ### Guide C
 ---
 
 This is a guide to reproduce Fig 7.
 
-Asymmetric multiprocessing(AMP) machine consists of heterogeneous cores:
-power-efficient slow cores and power-hungry fast cores.
-Since there is no NUMA-AMP machine yet, we emulate the AMP environment by
-changing the CPU frequency using `cpupower` command.
-In our experiment, we assume fast cores are 4x faster than slow cores and each
-socket has 14 fast and 14 slow cores, respectively.
-
 - underlying lock: shfllock-syncord
 - policy         : amp
 - benchmark      : will-it-scale/lock1, FxMark/MWRL, LevelDB
 
 
+Asymmetric multiprocessing(AMP) machine consists of heterogeneous cores:
+power-efficient slow cores and power-hungry fast cores.
+Since there is no NUMA-AMP machine yet, we emulate the AMP environment by
+changing the CPU frequency using `cpupower` command.
+`~/SynCord/scripts/change-cpu-freq.sh` has a sample bash script on how to change
+the cpu frequency.
+In our environment, fast cores are 4x faster than slow cores and each
+socket has 14 fast and 14 slow cores, respectively. Following is the example how
+we used the script.
+Please note that this job should be done in the HOST, not in the guest.
+Moreover, please be aware that forcing maximum frequency might damage your CPU.
+If you're not confident to enforce higher frequency for fast cores, you might
+want to skip these steps modifying the cpu frequency.
+It's difficult to see the performance improvement in overall throughput without
+emulating AMP, but you can still check the impact of the policy that half of the cores are prioritized
+over other cores.
+
+	# To see the default cpu frequency on the system
+	$ cpupower frequency-info | grep policy
+	current policy: frequency should be within 1000 MHz and 2.20 GHz.
+
+	# To see the hardware limit
+	$ cpupower frequnecy-info | grep limit
+	hardware limits: 1000 MHz - 4.00 GHz
+
+	$ ./change-cpu-freq.sh --help
+	usage: ./change-cpu-freq.sh num_cpu thread_per_core core_per_socket [amp|restore] fast_freq slow_freq
+
+	# To emulate AMP
+	$ ./change-cpu-freq.sh 224 1 28 amp 4000000 1000000
+
+	# To restore the frequency,
+	$ ./change-cpu-freq.sh 224 1 28 resotre 2200000 100000
+
+
+#### Check
+Please make sure you're using the correct kernel version and the SynCord-linux
+repo is on the correct branch.
+
+	(guest)$ uname -r
+	5.4.0-shfllock-syncord+
+
+	(guest)$ cd ~/SynCord-linux
+	(guest)$ git checkout -f shfllock-syncord
+	Switched to branch 'shfllock-syncord'
+	Your branch is up to date with 'origin/shfllock-syncord'.
+	(guest)$ cp ~/SynCord/scripts/config-syncord .config
+
+
 #### Build
 
+	(guest)$ cd ~/SynCord/src/concord/
 	(guest)$ python3 concord.py -v --linux ~/SynCord-linux
 			--policy policy/amp --livepatch patches/amp.patch
 
 #### Policy install
 
+	(guest)$ cd ~/SynCord/src/concord/
 	(guest)$ sudo mount bpffs -t bpf /sys/fs/bpf
 	(guest)$ sudo ./output/amp/eBPFGen/amp
 	(guest)$ sudo insmod ./output/amp/LivePatchGen/livepatch-concord.ko
-
 
 
 All the listed benchmark shows total throughput as well as breakdown throughput
 for fast and slow cores. You can verify AMP policy is working by comparing the
 throughput between fast and slow cores. The slow cores' throughput should be
 restricted and the fast cores' throughput increases.
+
 
 <br>
 ### Guide D
@@ -590,8 +698,23 @@ This is a guide to reproduce SCL policy using SynCord.
 - policy         : scl
 - benchmark      : xDir-rename
 
+#### Check
+Please make sure you're using the correct kernel version and the SynCord-linux
+repo is on the correct branch.
+
+	(guest)$ uname -r
+	5.4.0-shfllock-syncord+
+
+	(guest)$ cd ~/SynCord-linux
+	(guest)$ git checkout -f shfllock-syncord
+	Switched to branch 'shfllock-syncord'
+	Your branch is up to date with 'origin/shfllock-syncord'.
+	(guest)$ cp ~/SynCord/scripts/config-syncord .config
+
+
 #### Build
 
+	(guest)$ cd ~/SynCord/src/concord/
 	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux
 			--policy policy/scl --livepatch patches/scl.patch
 
@@ -624,6 +747,20 @@ We already tested this in the [quickstart](#4-rename-lock-profiling) section.
 - policy         : profiling
 - benchmark      : FxMark/MWRL
 
+#### Check
+Please make sure you're using the correct kernel version and the SynCord-linux
+repo is on the correct branch.
+
+	(guest)$ uname -r
+	5.4.0-stock-syncord+
+
+	(guest)$ cd ~/SynCord-linux
+	(guest)$ git checkout -f stock-syncord
+	Switched to branch 'stock-syncord'
+	Your branch is up to date with 'origin/stock-syncord'.
+	(guest)$ cp ~/SynCord/scripts/config-syncord .config
+
+
 #### Build
 
 	(guest)$ cd ~/SynCord/src/concord
@@ -641,9 +778,23 @@ This is a guide to reproduce per-CPU RW policy (Fig 12).
 - policy         : bravo
 - benchmark      : will-it-scale/pagefault1, Metis
 
+#### Check
+Please make sure you're using the correct kernel version and the SynCord-linux
+repo is on the correct branch.
+
+	(guest)$ uname -r
+	5.4.0-stock-syncord+
+
+	(guest)$ cd ~/SynCord-linux
+	(guest)$ git checkout -f stock-syncord
+	Switched to branch 'stock-syncord'
+	Your branch is up to date with 'origin/stock-syncord'.
+	(guest)$ cp ~/SynCord/scripts/config-syncord .config
+
 
 #### Build
 
+	(guest)$ cd ~/SynCord/src/concord/
 	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux --policy
 			policy/bravo --livepatch patches/bravo.patch
 
