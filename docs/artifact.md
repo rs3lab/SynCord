@@ -135,6 +135,9 @@ equipped with 28 cores, results in 224 cores in total. Please adjust the
 numbers and path to the vm image for your environment.
 The script opens port `4444` for ssh and `5555` for qmp.
 
+When you face the grub menu, just wait for 5 seconds, then the guest will be
+start with default `5.4.0-stock-syncord+` kernel.
+
 The provided disk image contains one 30GB partition holding Ubuntu 20.04 and
 one 20GB partition for experiments.
 There is single user `syncord` with password `syncord`, who has sudo power.
@@ -161,9 +164,11 @@ above example.
 
 > [Dependency] Since the `pin-vcpu.py` use python2.7, you might need following commands to
 > install pip for python2.7 and psutil package.
->
-	sudo python2 ./SynCord/scripts/get-pip.py
-	python2 -m pip install psutil
+> If you didn't change the kvm permission in above [step](#2-start-a-qemu-virtual-machine),
+> run following commands and above `pin-vcpu.py` with `sudo`
+
+	$ sudo python2 ./SynCord/scripts/get-pip.py
+	$ python2 -m pip install psutil
 
 
 Once you start the VM, let's check you're on the right kernel version.
@@ -219,7 +224,7 @@ To disable the profiling,
 
 	(guest)$ sudo ~/SynCord/scripts/uninstall_policy.sh
 
-To make sure the uninstallation is complete, check the `dmesg` and find
+To make sure the uninstallation is complete, check the `dmesg | grep concord` and find
 `livepatch: 'livepatch_concord': unpatching complete` message.
 
 # Detailed instructions
@@ -337,6 +342,10 @@ To build and run FxMark,
 	(guest)$ make
 	(guest)$ bin/run-fxmark.py
 
+To plot the graph,
+
+	(guest)$ bin/plotter.py --log logs/<log_dir>/fxmark.log --ty sc --out <output_dirname>
+
 <br>
 ### Metis
 ---
@@ -384,7 +393,7 @@ with your environment. Then, set `core_per_socket` at
 
 To build and run LevelDB,
 
-	(guest)$ cd ~/SynCord/benchmarks/metis
+	(guest)$ cd ~/SynCord/benchmarks/leveldb
 	(guest)$ cd leveldb-1.20
 	(guest)$ make
 	(guest)$ cd ..
@@ -429,11 +438,10 @@ If you want to use other directory or partition, change variables at the top of
 To see the benchmark usage:
 
 	(guest)$ python3 run_bench.py -h
-	usage: run_bench.py [-h] n duration bully victim
+	usage: run_bench.py [-h] [--scl SCL] n duration bully victim
 
-	xDir benchmark creates 3 directories. Two empty directory
-	`src_empty`, `dst_empty`, and `dst_N_files` directory which has
-	N empty files
+	xDir benchmark creates 3 directories. Two empty directory `src_empty`,
+	`dst_empty`, and `dst_N_files` directory which has N empty files
 
 	positional arguments:
 	  n           the number of files to creat under `dst_N_files`
@@ -443,7 +451,7 @@ To see the benchmark usage:
 
 	optional arguments:
 	  -h, --help  show this help message and exit
-
+	  --scl SCL   directory path to output/scl directory
 
 To run a single benchmark with specific number of bully and victim threads, use following command:
 
@@ -479,12 +487,12 @@ enabled. Thus, enabling NUMA-aware policy to ShflLock-syncord and CNA-syncord
 don't have any benefits but it can show the overhead coming from SynCord compared
 to its static implementation.
 
-When you follow below guides, please make sure you're using (i)correct kernel
-version and (ii)correct branch of SynCord to pass to concord.py as `--linux`.
+When you follow below guides, please make sure to (i) start a VM with correct kernel
+version and (ii) to checkout into correct branch of SynCord-linux which is
+passed to concord.py using `--linux`.
 
 __The policy programs described in Guide A to F are already compiled in the
 provided VM image. Feel free to skip 'build' instruction if you want.__
-
 
 <br>
 #### Policy Uninstall
@@ -508,12 +516,6 @@ In specific,
 - policy         : NUMA-aware
 - benchmark      : will-it-scale/lock1, FxMark/MWRL, LevelDB
 
-> [Tips]
-> If you want to compile the kernel yourself instead of using grub to select
-> pre-installed one, `CNA-syncord` branch need
-  `CONFIG_PARAVIRT_SPINLOCKS=y` and `CONFIG_NUMA_AWARE_SPINLOCKS=y` to be set.
-> The sample config file can be found at `SynCord/scripts/config-cna`.
-
 #### Build
 To create the NUMA-aware policy for ShflLock, run following commands.
 Please make sure the SynCord-linux repo in the guest machine is also pointing to
@@ -523,7 +525,7 @@ the correct branch.
 	(guest)$ python3 concord.py -v --linux ~/SynCord-linux --policy
 		policy/numa-grouping --livepatch patches/numa-grouping.patch
 
-This will generate `output/numa-grouping` directory.\\
+This will generate `output/numa-grouping` directory.
 
 #### Policy install
 To enable the policy:
@@ -532,8 +534,15 @@ To enable the policy:
 	(guest)$ sudo ./output/numa-grouping/eBPFGen/numa-grouping
 	(guest)$ sudo insmod ./output/numa-grouping/LivePatchGen/livepatch-concord.ko
 
-For CNA, you just need to replace `numa-grouping` into `numa-grouping-cna` for
-the above commands and use `CNA-syncord` branch to pass linux source directory.
+For CNA, please replace `numa-grouping` into `numa-grouping-cna` for
+the above commands and use `cna-syncord` branch for the linux source directory.
+
+> [Tips]
+> `cna-syncord` kernel needs
+  `CONFIG_PARAVIRT_SPINLOCKS=y` and `CONFIG_NUMA_AWARE_SPINLOCKS=y` to be set.
+> The sample config file can be found at `SynCord/scripts/config-cna`.
+> Please make sure those flags are set in the `SynCord-linux/.config` file to test cna-syncord.
+
 
 <br>
 ### Guide C
@@ -567,7 +576,9 @@ socket has 14 fast and 14 slow cores, respectively.
 
 
 All the listed benchmark shows total throughput as well as breakdown throughput
-for fast and slow cores.
+for fast and slow cores. You can verify AMP policy is working by comparing the
+throughput between fast and slow cores. The slow cores' throughput should be
+restricted and the fast cores' throughput increases.
 
 <br>
 ### Guide D
@@ -589,14 +600,10 @@ This is a guide to reproduce SCL policy using SynCord.
 	# One time mounting bpffs
 	(guest)$ sudo mount bpffs -t bpf /sys/fs/bpf
 
-	# Build benchmark
-	(guest)$ cd ~/SynCord/benchmark/xDir-rename
-	(guest)$ make
+	# Build benchmark and mount temp (See xDir-rename section)
 
 	# Run benchmark
 	(guest)$ python3 run_bench.py 500000 60 2 2 --scl ~/SynCord/src/concord/output/scl
-
-
 
 SCL policy tracks the *number of threads* using the lock.
 Once the policy is enabled, it tries to balance the lock hold time across
@@ -616,6 +623,12 @@ We already tested this in the [quickstart](#4-rename-lock-profiling) section.
 - underlying lock: stock-syncord
 - policy         : profiling
 - benchmark      : FxMark/MWRL
+
+#### Build
+
+	(guest)$ cd ~/SynCord/src/concord
+	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux
+		--policy policy/lockstat --livepatch patches/lockstat.patch
 
 
 <br>
@@ -640,13 +653,6 @@ This is a guide to reproduce per-CPU RW policy (Fig 12).
 	(guest)$ cd ~/SynCord/src/concord/output/bravo
 	(guest)$ sudo ./eBPFGen/bravo
 	(guest)$ sudo insmod ./LivePatchGen/livepatch-concord.ko
-
-
-#### Build
-
-	(guest)$ cd ~/SynCord/src/concord
-	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux
-		--policy policy/lockstat --livepatch patches/lockstat.patch
 
 
 # How to create the disk image
@@ -687,6 +693,8 @@ lock scalability on NUMA machine.
 If X11 connection is there, you'll see the QEMU GUI popup window to install
 ubuntu. Install ubuntu server with OpenSSH package and disabled LVM.
 Then login to the installed user.
+If you don't have X11 connection, please refer this
+[link](https://github.com/XieGuochao/cloud-image-builder) to setup the image.
 
 Open `/etc/default/grub` and update `GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0"`.
 This will print initial booting messages to the console on the start of the
