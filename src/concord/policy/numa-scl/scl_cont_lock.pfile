@@ -1,0 +1,23 @@
+SEC("lock_qspinlock_contended")
+int custom_lock_contended(struct __lock_policy_args *args)
+{
+	unsigned long num_threads = args->arg7;
+
+	if(num_threads == 0){
+		return 0;
+	}
+
+	/* When joining the queue */
+	unsigned long quota = args->tot_lock_hold / num_threads;
+
+	/* save current thread's tot lock time inside the node */
+	unsigned long lock_hold = args->lock_hold;
+	args->lock_hold_capture = lock_hold;
+
+	if (args->lock_hold * num_threads > args->tot_lock_hold){
+		unsigned long need_to_wait = args->lock_hold * num_threads - args->tot_lock_hold;
+		bpf_back_off(NULL, need_to_wait); // No stealing
+	}
+
+	return 0;
+}

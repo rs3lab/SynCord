@@ -1,0 +1,8 @@
+SEC("lock_qspinlock_acqed")
+int custom_lock_acquired(struct __lock_policy_args *args)
+{
+	// start measure critical section
+	unsigned long now = bpf_ktime_get_ns();
+	args->start_ts = now;
+	return 0;
+}

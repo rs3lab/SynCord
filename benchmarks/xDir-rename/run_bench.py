@@ -97,7 +97,7 @@ if __name__ == '__main__':
     turn_off_dir_index()
 
     if args.scl is not None:
-       os.system("sudo %s/eBPFGen/scl" % args.scl)
+       os.system("sudo %s/eBPFGen/*scl" % args.scl)
        os.system("sudo insmod %s/LivePatchGen/livepatch-concord.ko" % args.scl)
        time.sleep(10)
 

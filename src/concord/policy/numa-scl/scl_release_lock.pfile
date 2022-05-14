@@ -1,0 +1,12 @@
+SEC("lock_qspinlock_release")
+bool custom_lock_release(struct __lock_policy_args *args)
+{
+	// Get the length of critical section
+	unsigned long now = bpf_ktime_get_ns();
+	unsigned long cs_len = now - args->start_ts;
+
+	args->lock_hold += cs_len;		//per-thread
+	args->tot_lock_hold += cs_len;	//per-lock
+
+	return 0;
+}
