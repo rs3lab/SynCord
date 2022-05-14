@@ -85,7 +85,7 @@ image](#how-to-create-the-disk-image) from scratch.
 ## 1. Download the disk image and SynCord repo
 ---
 Download the compresssed disk image
-[here](https://zenodo.org/record/6463964#.YloPYC8RpB0).
+[here](https://zenodo.org/record/6549331#.YoAZhS8RoeY).
 Once you finish downloading the file, uncompress it using following command.
 
 	$ pv vm.img.xz | unxz -T <num_threads> > ubuntu-20.04.img
@@ -332,9 +332,9 @@ socket(>28) on stock linux.
 FxMark is a file system microbenchmark in the kernelspace.
 
 > [Dependency]
-> fxmark requires python2
+> fxmark requires python2 and gnuplot
 >
-	(guest)# sudo apt install python2
+	(guest)# sudo apt install python2 gnuplot
 
 To build and run FxMark,
 
@@ -346,7 +346,11 @@ The `make` command automatically detect your environment and set the number of
 cores to test. If you want to change it manually, revise
 `test_hw_thr_cnts_coarse_grain` in `bin/cpupol.py`.
 
-To plot the graph,
+The `run-fxmark.py` script runs the benchmark and creates a log file
+`fxmark.log` under `logs` directory.
+
+To plot the graph, pass the log file with `--log` option and give a name for
+an output directory with `--out` option.
 
 	(guest)$ bin/plotter.py --log logs/<log_dir>/fxmark.log --ty sc --out <output_dirname>
 	(guest)$ cat <output_dirname>/mem:tmpfs:MWRL:bufferedio.dat
@@ -692,10 +696,10 @@ restricted and the fast cores' throughput increases.
 ### Guide D
 ---
 
-This is a guide to reproduce SCL policy using SynCord.
+This is a guide to reproduce Figure 9, *SCL and *NUMA-SCL policy using SynCord.
 
 - underlying lock: shfllock-syncord
-- policy         : scl
+- policy         : scl and numa-scl
 - benchmark      : xDir-rename
 
 #### Check
@@ -715,8 +719,14 @@ repo is on the correct branch.
 #### Build
 
 	(guest)$ cd ~/SynCord/src/concord/
+
+	# Build *SCL policy
 	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux
 			--policy policy/scl --livepatch patches/scl.patch
+
+	# Build *NUMA-SCL policy
+	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux
+			--policy policy/numa-scl --livepatch patches/numa-scl.patch
 
 #### Usage
 
@@ -725,22 +735,31 @@ repo is on the correct branch.
 
 	# Build benchmark and mount temp (See xDir-rename section)
 
-	# Run benchmark
-	(guest)$ python3 run_bench.py 500000 60 2 2 --scl ~/SynCord/src/concord/output/scl
+	# Run benchmark for 16 threads (8 bullies and 8 victims) with *SCL policy
+	(guest)$ python3 run_bench.py 500000 60 8 8 --scl ~/SynCord/src/concord/output/scl
+
+	# Run benchmark for 16 threads (8 bullies and 8 victims) with *NUMA-SCL policy
+	(guest)$ python3 run_bench.py 500000 60 8 8 --scl ~/SynCord/src/concord/output/numa-scl
 
 SCL policy tracks the *number of threads* using the lock.
 Once the policy is enabled, it tries to balance the lock hold time across
-threads. Since the number of lock users is cumulative, you need to disable
-the policy when a workload is done.
-Thus, it is recommended to test the policy by passing the compiled output to
-the `run_bench.py` script with `--scl` option. If you want to manually enable
-the policy and run the benchmark, please refer the
-`run_bench.py` how to do it.
+threads. Since the number of lock users is cumulative,
+the policy should be disabled when a workload is done.
+Thus, it is recommended to use the policy by passing the compiled output to
+the `run_bench.py` script with `--scl` option. With the option, `run_bench.py`
+first enables the policy, run the benchmark, and then uninstall the policy after
+the benchmark is done.
+
+To reproduce the stock or shfllock in the Fig 9 graph, start the VM with `5.4.0-stock-syncord` or
+`5.4.0-shfllock-syncord` kernel and follow [xDir-rename](#xdir-rename) instructions.
+For these two variants, there's no need to pass `--scl` option to `run_bench.py`.
+
 
 <br>
 ### Guide E
 ---
 
+This is the guide to enable SynCord-lockstat with 10 counters.
 We already tested this in the [quickstart](#4-rename-lock-profiling) section.
 
 - underlying lock: stock-syncord
@@ -766,6 +785,14 @@ repo is on the correct branch.
 	(guest)$ cd ~/SynCord/src/concord
 	(guest)$ python3 concord.py -v --linux_src ~/SynCord-linux
 		--policy policy/lockstat --livepatch patches/lockstat.patch
+
+
+The Fig13 slowdown graph compares the FxMark results executed on different
+kernels with profiling features enabled:
+
+- baseline: FxMark result measured on `stock` kernel,
+- lockstat: FxMark result measured on `stock-lockstat` kernel, a stock kernel with lockstat enabled
+- SynCord-lockstat: FxMark result measured on SynCord-lockstat (profiling feature enabled by this guide E instructions)
 
 
 <br>
@@ -973,5 +1000,5 @@ Inside the guest VM, clone the [SynCord](https://github.com/rs3lab/SynCord) and
 install dependencies and build:
 
 	$ sudo apt install python3-pip clang llvm
-	$ pip install gitpython
+	$ pip3 install gitpython
 	$ cd ~/Syncord/src/kpatch && make
