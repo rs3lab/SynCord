@@ -164,7 +164,7 @@ index d5ba6b8d6..c767b40d2 100644
 +		//unsigned long start = ktime_get_mono_fast_ns();
 +
 +		int i;
-+		for(i=0; i<NR_CPUS; i++){
++		for(i=0; i<${NCPU}; i++){
 +			while(pld->per_cpu_data[i].field != 0){
 +				cpu_relax();
 +

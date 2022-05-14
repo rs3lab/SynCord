@@ -79,6 +79,7 @@ class PATCH_GEN(Instance):
             with cd(self.path_src):
                 cmd = ["cp", self.livepatch, CONFIG.KPATCH_RESULT]
                 execute(cmd)
+                inplace_replace(CONFIG.KPATCH_RESULT, "${NCPU}", str(os.cpu_count()))
 
 
     def _build_impl(self, override: bool) -> None:
